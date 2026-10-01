@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <ApplicationIcon>../../assets/SongNote.ico</ApplicationIcon>
+    <AssemblyName>SongNote</AssemblyName>
+    <StartupObject>SongNote.Windows.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SongNote.Core/SongNote.Core.csproj" />
+    <Resource Include="../../assets/SongNote.ico" Link="SongNote.ico" />
+    <None Include="../../client-config.json" Link="client-config.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../client-config.json')" />
+  </ItemGroup>
+</Project>

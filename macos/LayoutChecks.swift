@@ -1,55 +1,86 @@
 import AppKit
 
-// Read-only native geometry checks: use the real window builders, do not present
-// windows, save window positions, edit notes, or issue network requests.
+// Build native windows from synthetic in-memory notes. No private configuration,
+// disk persistence, displayed windows, login-item registration, or network calls.
 @MainActor enum LayoutChecks {
     struct Failure: Error, CustomStringConvertible { let description: String }
-    static func require(_ value: Bool, _ message: String) throws {
-        if !value { throw Failure(description: message) }
-    }
+    static func require(_ value: Bool, _ message: String) throws { if !value { throw Failure(description: message) } }
     static func checkControls(_ view: NSView) throws {
         if view is NSScrollView { return }
-        for child in view.subviews {
+        for child in view.subviews where !child.isHidden {
             if child is NSButton || child is NSTextField || child is NSImageView {
-                // Native text fields extend their paint frame by two pixels for
-                // optical alignment. Check the same alignment rect Auto Layout uses.
                 let frame = child.alignmentRect(forFrame: child.frame)
                 try require(frame.minX >= -1 && frame.minY >= -1 && frame.maxX <= view.bounds.width + 1 && frame.maxY <= view.bounds.height + 1,
                             "\(type(of: child)) overflows \(type(of: view)): \(frame), parent \(view.bounds)")
                 if let button = child as? NSButton { try require(button.title != "Button", "Default button label still visible") }
+                if let field = child as? NSTextField, let font = field.font { try require(font.pointSize >= 11, "Text below 11pt") }
             }
             try checkControls(child)
         }
     }
+    static func fixture() -> LocalState {
+        var state = LocalState()
+        for index in 0..<7 {
+            var note = Note.blank(); note.text = "布局便签 \(index + 1) 中文 📝\n检查长正文、卡片预览与状态提示"
+            note.color = colorOrder[index % colorOrder.count]; note.pinned = index < 2
+            note.updated_at = "2026-10-01T02:00:00Z"
+            if index == 5 { note.conflict_of = "missing-original" }
+            if index == 6 { state.deleteConflictIDs = [note.id] }
+            state.notes[note.id] = note
+        }
+        return state
+    }
+    static func checkTitlebar(_ window: NSWindow) throws {
+        for accessory in window.titlebarAccessoryViewControllers {
+            accessory.view.layoutSubtreeIfNeeded(); try checkControls(accessory.view)
+        }
+    }
     static func run() throws {
-        let delegate = AppDelegate(); delegate.checkingLayout = true; delegate.store = try Store()
+        let delegate = AppDelegate(); delegate.checkingLayout = true; delegate.store = Store(previewState: fixture())
         delegate.buildList(); delegate.refresh()
         var cases = 0
-        for size in [NSSize(width: 400, height: 420), NSSize(width: 430, height: 660), NSSize(width: 720, height: 760)] {
-            delegate.window.setContentSize(size)
-            delegate.window.contentView!.layoutSubtreeIfNeeded()
-            delegate.list.enclosingScrollView!.layoutSubtreeIfNeeded()
+        for size in [NSSize(width: 360, height: 360), NSSize(width: 460, height: 710), NSSize(width: 650, height: 710), NSSize(width: 680, height: 710), NSSize(width: 720, height: 760)] {
+            delegate.window.setContentSize(size); delegate.window.contentView!.layoutSubtreeIfNeeded()
+            let scroll = delegate.list.enclosingScrollView!; scroll.layoutSubtreeIfNeeded()
             delegate.list.layoutSubtreeIfNeeded()
-            try checkControls(delegate.window.contentView!)
-            let available = delegate.list.enclosingScrollView!.contentSize.width
-            for card in delegate.list.subviews {
-                try require(abs(card.frame.width - available) < 1, "List card clipped: \(card.frame.width), available \(available)")
+            try checkControls(delegate.window.contentView!); try checkTitlebar(delegate.window)
+            let list = delegate.list
+            let width = (scroll.contentSize.width - CGFloat(list.columns - 1) * NotesListView.gap) / CGFloat(list.columns)
+            try require(list.cards.count == 7, "Synthetic cards not covered")
+            for (index, card) in list.cards.enumerated() {
+                card.layoutSubtreeIfNeeded()
+                try require(abs(card.frame.width - width) < 1, "Card width does not match column")
+                try require(card.frame.minX >= 0 && card.frame.maxX <= scroll.contentSize.width + 1, "Card clipped horizontally")
+                try require(card.frame.maxY <= list.bounds.height + 1, "Last card cannot scroll into view")
+                try require(card.frame.height == 84, "Card height changed unexpectedly")
+                for earlier in list.cards.prefix(index) { try require(!card.frame.intersects(earlier.frame), "Cards overlap") }
                 try checkControls(card)
             }
+            if size.width == 460 { try require(scroll.contentSize.height >= 6 * 84 + 5 * 8, "Default window cannot show six cards") }
+            if size.width == 720 { try require(list.columns == 2, "Wide window did not switch to two columns") }
             cases += 1
         }
-        let note = delegate.store.visible.first ?? Note.blank()
-        let editor = NoteWindow(note: note, store: delegate.store, present: false)
-        for size in [NSSize(width: 360, height: 280), NSSize(width: 380, height: 420), NSSize(width: 640, height: 640)] {
-            editor.window.setContentSize(size)
-            editor.window.contentView!.layoutSubtreeIfNeeded()
-            try checkControls(editor.window.contentView!)
-            let root = editor.window.contentView!
-            let button = editor.syncButton.convert(editor.syncButton.bounds, to: root)
-            try require(abs(root.bounds.maxX - button.maxX - 12) < 1, "Sync button is not right aligned")
-            try require(editor.editor.enclosingScrollView!.frame.height > 60, "Editor is squeezed by controls")
-            cases += 1
+        let original = delegate.store.visible.first!
+        let editor = NoteWindow(note: original, store: delegate.store, present: false)
+        for mode in 0..<4 {
+            var note = original
+            delegate.store.state.deleteConflictIDs = nil; delegate.store.lastSaved = mode != 1
+            delegate.store.saveError = mode == 1 ? "只读文件系统：无法写入本地便签" : nil
+            note.conflict_of = mode == 2 ? "missing-original" : nil
+            if mode == 3 { delegate.store.state.deleteConflictIDs = [note.id] }
+            delegate.store.state.notes[note.id] = note; editor.refresh()
+            for size in [NSSize(width: 280, height: 240), NSSize(width: 380, height: 420), NSSize(width: 640, height: 640)] {
+                editor.window.setContentSize(size); editor.window.contentView!.layoutSubtreeIfNeeded()
+                let root = editor.window.contentView!
+                try checkControls(root); try checkTitlebar(editor.window)
+                let button = editor.syncButton.convert(editor.syncButton.bounds, to: root)
+                try require(abs(root.bounds.maxX - button.maxX - 12) < 1, "Sync button is not right aligned")
+                try require(editor.editor.enclosingScrollView!.frame.height >= size.height * 0.6, "Editor is squeezed by controls")
+                if mode == 1 { try require(editor.statusLabel.stringValue.contains("保存失败"), "Save failure hidden by sync status") }
+                if mode >= 2 { try require(!editor.banner.isHidden, "Persistent conflict notice hidden") }
+                cases += 1
+            }
         }
-        print("LAYOUT_CHECK_OK: \(cases) native window sizes, controls contained, complete cards, right-aligned sync, no default labels")
+        print("LAYOUT_CHECK_OK: \(cases) native cases, seven fixture cards, one/two columns, titlebar, conflict banners and save failure")
     }
 }

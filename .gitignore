@@ -6,3 +6,7 @@ server/data/
 server/config.json
 windows/client-config.json
 macos/client-config.json
+windows/**/bin/
+windows/**/obj/
+windows/.nuget/
+windows/.dotnet-home/

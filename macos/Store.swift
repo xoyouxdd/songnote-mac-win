@@ -7,6 +7,7 @@ import AppKit
     var state: LocalState
     var onChange: (() -> Void)?
     var onRemap: (([String: String]) -> Void)?
+    var onAccepted: (([Receipt], [Change]) -> Void)?
     var status = "正在连接…"
     var syncing = false
     var timer: Timer?
@@ -35,10 +36,19 @@ import AppKit
             state = try JSONDecoder().decode(LocalState.self, from: Data(contentsOf: file))
         } else { state = LocalState() }
     }
+    // Layout checks use deterministic fixtures without reading private notes,
+    // creating files, or connecting to the production service.
+    init(previewState: LocalState) {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("SongNote-layout-preview")
+        file = directory.appendingPathComponent("state.json")
+        configuration = Configuration(base_url: "https://example.invalid", token: String(repeating: "x", count: 32))
+        state = previewState
+    }
     var visible: [Note] {
         state.notes.values.filter { !$0.deleted }.sorted {
             if $0.pinned != $1.pinned { return $0.pinned }
-            return $0.updated_at > $1.updated_at
+            if $0.updated_at != $1.updated_at { return $0.updated_at > $1.updated_at }
+            return $0.id < $1.id
         }
     }
     @discardableResult func persist() -> Bool {
@@ -59,10 +69,21 @@ import AppKit
             onChange?(); return false
         }
     }
-    func create() -> Note { let note = Note.blank(); update(note); return note }
+    func create() -> Note {
+        let note = state.createDraft()
+        if persist() { status = "空白草稿已保存到本机" }
+        onChange?(); return note
+    }
+    func discardDraft(_ id: String) {
+        if state.discardDraft(id) { _ = persist(); onChange?() }
+    }
+    func acknowledgeDeleteConflict(_ id: String) {
+        state.deleteConflictIDs?.remove(id); _ = persist(); onChange?()
+    }
     var saveStatus: String { lastSaved ? "已保存到本机" : "本地保存失败，请勿退出" }
     func syncStatus(for id: String) -> String {
         guard lastSaved else { return "同步已暂停，等待本地保存" }
+        if state.draftIDs?.contains(id) == true { return "本机草稿 · 关闭空白窗口自动丢弃" }
         if syncing && showSyncProgress { return "正在同步…" }
         if let syncError {
             if syncError == "离线" { return state.pending[id] == nil ? "离线 · 等待连接" : "离线 · 待同步" }
@@ -75,6 +96,7 @@ import AppKit
     }
     func update(_ note: Note) {
         var updated = note
+        state.draftIDs?.remove(note.id)
         updated.updated_at = ISO8601DateFormatter().string(from: Date())
         state.notes[note.id] = updated
         state.pending[note.id] = Change(updated)
@@ -130,6 +152,7 @@ import AppKit
                     else if hasDeleteConflict { self.status = "删除未执行 · 已保留另一端的新内容" }
                     else { self.status = self.state.pending.isEmpty ? "已同步 · \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short))" : "本机有新修改 · 等待同步" }
                 }
+                self.onAccepted?(result.results, changes)
                 self.onRemap?(remapped); self.onChange?()
             }
         }.resume()

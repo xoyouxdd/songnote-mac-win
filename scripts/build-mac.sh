@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 APP="$PWD/build/SongNote.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -swift-version 5 -O -framework AppKit macos/Models.swift macos/Store.swift macos/Theme.swift macos/LayoutChecks.swift macos/App.swift -o "$APP/Contents/MacOS/SongNote"
+swiftc -swift-version 5 -target "$(uname -m)-apple-macosx13.0" -O -framework AppKit -framework QuartzCore -framework ServiceManagement macos/Models.swift macos/Store.swift macos/Theme.swift macos/LayoutChecks.swift macos/App.swift -o "$APP/Contents/MacOS/SongNote"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
