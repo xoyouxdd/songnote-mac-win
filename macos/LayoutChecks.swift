@@ -21,7 +21,10 @@ import AppKit
     static func fixture() -> LocalState {
         var state = LocalState()
         for index in 0..<7 {
-            var note = Note.blank(); note.text = "布局便签 \(index + 1) 中文 📝\n检查长正文、卡片预览与状态提示"
+            var note = Note.blank()
+            let newline = ["\r\n", "\n", "\r", "\u{2028}"][index % 4]
+            let title = "布局便签 \(index + 1) 中文 📝 " + String(repeating: "很长的标题", count: 30)
+            note.text = (index == 1 ? "  \(newline)\(newline)" : "") + title + newline + newline + String(repeating: "正文预览 长段落 📝 ", count: 80) + newline + "最后一段"
             note.color = colorOrder[index % colorOrder.count]; note.pinned = index < 2
             note.updated_at = "2026-10-01T02:00:00Z"
             if index == 5 { note.conflict_of = "missing-original" }
@@ -55,6 +58,16 @@ import AppKit
                 try require(card.frame.height == 84, "Card height changed unexpectedly")
                 for earlier in list.cards.prefix(index) { try require(!card.frame.intersects(earlier.frame), "Cards overlap") }
                 try checkControls(card)
+                let lines = [card.title, card.preview, card.hint]
+                let frames = lines.map { $0.alignmentRect(forFrame: $0.frame) }.sorted { $0.minY < $1.minY }
+                for pair in zip(frames, frames.dropFirst()) {
+                    try require(pair.1.minY - pair.0.maxY >= 2, "Title, preview or timestamp overlap")
+                }
+                for field in lines {
+                    try require(field.maximumNumberOfLines == 1 && field.cell?.usesSingleLineMode == true, "Card label can wrap")
+                    try require(field.stringValue.components(separatedBy: .newlines).count == 1, "Newline leaked into card label")
+                }
+                try require(!card.preview.stringValue.isEmpty, "Long multiline note lost its preview")
             }
             if size.width == 460 { try require(scroll.contentSize.height >= 6 * 84 + 5 * 8, "Default window cannot show six cards") }
             if size.width == 720 { try require(list.columns == 2, "Wide window did not switch to two columns") }
@@ -81,6 +94,6 @@ import AppKit
                 cases += 1
             }
         }
-        print("LAYOUT_CHECK_OK: \(cases) native cases, seven fixture cards, one/two columns, titlebar, conflict banners and save failure")
+        print("LAYOUT_CHECK_OK: \(cases) native cases, seven long multiline cards, fixed single-line labels without overlap, one/two columns and notices")
     }
 }

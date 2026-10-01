@@ -1,6 +1,23 @@
 import Foundation
 @main struct ModelTest {
     static func main() {
+        // Mixed newline formats must affect display only, not the synced payload.
+        for newline in ["\n", "\r\n", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+            var note = Note.blank()
+            note.text = "  \(newline)标题 中文 📝\(newline)\(newline)正文第一行\(newline)  正文第二行  "
+            let stored = note.text
+            assert(note.title == "标题 中文 📝")
+            assert(note.preview == "正文第一行 正文第二行")
+            assert(note.text == stored && Change(note).text == stored)
+        }
+        var display = Note.blank()
+        assert(display.title == "新便签" && display.preview.isEmpty)
+        display.text = "单行便签"; assert(display.title == display.text && display.preview.isEmpty)
+        display.text = " \r\n\t\r\n"; assert(display.title == "新便签" && display.preview.isEmpty)
+        let longTitle = String(repeating: "很长的标题📝", count: 100)
+        display.text = longTitle + "\r\n正文\n第二段\r第三段"
+        assert(display.title == longTitle && display.preview == "正文 第二段 第三段")
+        print("NOTE_DISPLAY_TESTS_OK: LF/CRLF/CR/Unicode newlines, blank lines, long titles, original payload preserved")
         var original = Note.blank(); original.text = "原始"; original.revision = 5
         let submitted = Change(original)
         var state = LocalState(); state.notes[original.id] = original; state.pending[original.id] = submitted

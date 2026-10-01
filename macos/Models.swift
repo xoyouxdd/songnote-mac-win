@@ -9,7 +9,15 @@ struct Note: Codable, Equatable {
     var updated_at: String
     var deleted: Bool
     var conflict_of: String?
-    var title: String { text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? "新便签" }
+    // Display-only parsing: support CRLF, LF, CR and Unicode line separators
+    // without normalizing or rewriting the saved/synchronized note text.
+    private var displayLines: [String] {
+        text.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+    var title: String { displayLines.first ?? "新便签" }
+    var preview: String { displayLines.dropFirst().joined(separator: " ") }
     static func blank() -> Note {
         Note(id: UUID().uuidString, text: "", color: "yellow", pinned: false, revision: 0,
              updated_at: ISO8601DateFormatter().string(from: Date()), deleted: false)
