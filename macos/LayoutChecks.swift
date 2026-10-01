@@ -91,6 +91,8 @@ import AppKit
                 try require(editor.editor.enclosingScrollView!.frame.height >= size.height * 0.6, "Editor is squeezed by controls")
                 if mode == 1 { try require(editor.statusLabel.stringValue.contains("保存失败"), "Save failure hidden by sync status") }
                 if mode >= 2 { try require(!editor.banner.isHidden, "Persistent conflict notice hidden") }
+                // A pinned note shows a tinted pin, never the solid ink block that read as a stuck button.
+                if note.pinned { try require((editor.pinButton as? ToolButton).map { $0.baseColor != Theme.ink && $0.baseColor != .clear } == true, "Pinned state should be a colour tint") }
                 cases += 1
             }
         }

@@ -19,6 +19,8 @@ public static class Theme
     {
         app.Resources.MergedDictionaries.Add(new ResourceDictionary
         { Source = new Uri("pack://application:,,,/Styles/ScrollBars.xaml") });
+        app.Resources.MergedDictionaries.Add(new ResourceDictionary
+        { Source = new Uri("pack://application:,,,/Styles/Controls.xaml") });
         var button = new Style(typeof(Button));
         button.Setters.Add(new Setter(Control.FontSizeProperty, 12d));
         button.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Ink)));
@@ -40,25 +42,30 @@ public static class Theme
         disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.45)); template.Triggers.Add(disabled);
         button.Setters.Add(new Setter(Control.TemplateProperty, template)); app.Resources[typeof(Button)] = button;
     }
-    public static Button Icon(string glyph, string label, Action action, double width = 28)
+    public static readonly FontFamily Glyphs = new("Segoe Fluent Icons, Segoe MDL2 Assets");
+    public static Style Style(string key) => (Style)Application.Current.FindResource(key);
+    public static Button Icon(string glyph, string label, Action action, double width = 28, string style = "ToolButton")
     {
-        var button = new Button { Content = glyph, Width = width, Height = 28, Background = Brushes.Transparent,
-            ToolTip = label, FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 14 };
+        var button = new Button { Content = glyph, Width = width, Height = 28, Style = Style(style),
+            ToolTip = label, FontFamily = Glyphs, FontSize = 14 };
         AutomationProperties.SetName(button, label); WindowChrome.SetIsHitTestVisibleInChrome(button, true);
         button.Click += (_, _) => action(); return button;
+    }
+    public static TextBlock Glyph(string glyph, double size = 14, Brush? color = null) => new()
+    {
+        Text = glyph, FontFamily = Glyphs, FontSize = size, Foreground = color ?? new SolidColorBrush(Ink),
+        VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center
+    };
+    // Accent at reduced opacity: tinted borders and the selected pin, readable on every paper colour.
+    public static SolidColorBrush Tint(string key, byte alpha)
+    {
+        var color = Accent(key).Color; return new SolidColorBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
     }
     public static TextBlock Text(string value, double size = 13, bool strong = false) => new()
     {
         Text = value, FontSize = size, Foreground = strong ? new SolidColorBrush(Ink) : Muted,
         FontWeight = strong ? FontWeights.SemiBold : FontWeights.Normal,
         TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center
-    };
-    public static System.Windows.Shapes.Path PinIcon(bool filled) => new()
-    {
-        Data = Geometry.Parse("M5,2 L11,2 L11,5 L13,8 L13,10 L9,10 L9,16 L8,18 L7,16 L7,10 L3,10 L3,8 L5,5 Z"),
-        Width = 14, Height = 16, Stretch = Stretch.Uniform, StrokeThickness = 1.2,
-        StrokeLineJoin = PenLineJoin.Round, Stroke = filled ? Brushes.White : new SolidColorBrush(Ink),
-        Fill = filled ? Brushes.White : Brushes.Transparent
     };
     public static string Timestamp(string value)
     {
@@ -68,21 +75,33 @@ public static class Theme
     }
     public static ContextMenu ColorsMenu(string id, string current, Action<string, string> select)
     {
-        var menu = new ContextMenu();
-        var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(6, 2, 6, 4) };
+        var menu = new ContextMenu { MinWidth = 236 };
+        menu.Items.Add(new MenuItem { Header = "便签颜色", Style = Style("SectionMenuHeader"), IsEnabled = false });
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
         for (int i = 0; i < Colors.Length; i++)
         {
-            var key = Colors[i];
-            var dot = new Button { Width = 28, Height = 28, Margin = new Thickness(2), Background = Accent(key), Content = key == current ? "✓" : "", ToolTip = Names[i] };
-            var circle = new FrameworkElementFactory(typeof(Border)); circle.SetValue(Border.CornerRadiusProperty, new CornerRadius(14));
-            circle.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Ink)); circle.SetValue(Border.BorderThicknessProperty, new Thickness(key == current ? 2 : 0));
-            circle.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-            var mark = new FrameworkElementFactory(typeof(ContentPresenter)); mark.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center); mark.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center); circle.AppendChild(mark);
-            dot.Template = new ControlTemplate(typeof(Button)) { VisualTree = circle };
-            AutomationProperties.SetName(dot, Names[i] + (key == current ? "，已选中" : ""));
+            var key = Colors[i]; bool chosen = key == current;
+            var dot = new Button { Width = 30, Height = 30, Margin = new Thickness(0, 0, 4, 0), Background = Accent(key), ToolTip = Names[i], Cursor = Cursors.Hand,
+                FocusVisualStyle = Style("FocusRing"), Content = chosen ? Glyph("\uE73E", 12, new SolidColorBrush(Ink)) : null };
+            var ring = new FrameworkElementFactory(typeof(Border)); ring.Name = "Ring";
+            ring.SetValue(Border.CornerRadiusProperty, new CornerRadius(15)); ring.SetValue(Border.PaddingProperty, new Thickness(3));
+            ring.SetValue(Border.BorderThicknessProperty, new Thickness(2)); ring.SetValue(Border.BorderBrushProperty, chosen ? new SolidColorBrush(Ink) : Brushes.Transparent);
+            var fill = new FrameworkElementFactory(typeof(Border));
+            fill.SetValue(Border.CornerRadiusProperty, new CornerRadius(11));
+            fill.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
+            var mark = new FrameworkElementFactory(typeof(ContentPresenter)); mark.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center); mark.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            fill.AppendChild(mark); ring.AppendChild(fill);
+            var template = new ControlTemplate(typeof(Button)) { VisualTree = ring };
+            if (!chosen)
+            {
+                var hover = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+                hover.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(0x59, Ink.R, Ink.G, Ink.B)), "Ring")); template.Triggers.Add(hover);
+            }
+            dot.Template = template;
+            AutomationProperties.SetName(dot, Names[i] + (chosen ? "，已选中" : ""));
             dot.Click += (_, _) => { select(id, key); menu.IsOpen = false; }; row.Children.Add(dot);
         }
-        menu.Items.Add(new MenuItem { Header = row, StaysOpenOnClick = true });
+        menu.Items.Add(new MenuItem { Header = row, Style = Style("PlainMenuRow"), StaysOpenOnClick = true, Focusable = false });
         var named = new MenuItem { Header = "按名称选择颜色" };
         for (int i = 0; i < Colors.Length; i++)
         {

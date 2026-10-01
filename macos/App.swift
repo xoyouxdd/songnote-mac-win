@@ -13,8 +13,9 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     let statusLabel = NSTextField(labelWithString: "已保存到本机")
     let conflictLabel = NSTextField(wrappingLabelWithString: "")
     let noticeButton = NSButton(title: "", target: nil, action: nil)
+    let bannerIcon = NSImageView()
     let banner = NSStackView()
-    let syncButton = NSButton()
+    let syncButton = ToolButton()
     var pinButton: NSButton!
     var moreButton: NSButton!
     var bannerHeight: NSLayoutConstraint!
@@ -56,7 +57,10 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         noticeButton.setContentHuggingPriority(.required, for: .horizontal)
         noticeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         banner.orientation = .horizontal; banner.spacing = 8; banner.alignment = .centerY
-        banner.addArrangedSubview(conflictLabel); banner.addArrangedSubview(noticeButton)
+        banner.wantsLayer = true; banner.layer?.cornerRadius = 6; banner.layer?.borderWidth = 1
+        banner.edgeInsets = NSEdgeInsets(top: 0, left: 9, bottom: 0, right: 5)
+        bannerIcon.setContentHuggingPriority(.required, for: .horizontal)
+        banner.addArrangedSubview(bannerIcon); banner.addArrangedSubview(conflictLabel); banner.addArrangedSubview(noticeButton)
         banner.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(banner)
         bannerHeight = banner.heightAnchor.constraint(equalToConstant: 0)
         let scroll = NSScrollView(); scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -107,19 +111,17 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         }
         let background = Theme.palette[note.color] ?? Theme.palette["yellow"]!
         window.backgroundColor = background; Theme.background(window.contentView?.layer, color: background)
+        // Pinned: filled pin on a tint of the note colour, not a heavy dark block on pastel paper.
         pinButton.image = Theme.symbol(note.pinned ? "pin.fill" : "pin")
-        Theme.button(pinButton, active: note.pinned); pinButton.setAccessibilityLabel(note.pinned ? "取消列表置顶" : "列表置顶")
+        Theme.button(pinButton, tint: note.pinned ? (Theme.accents[note.color] ?? Theme.ink).withAlphaComponent(0.4) : nil)
+        pinButton.setAccessibilityLabel(note.pinned ? "取消列表置顶" : "列表置顶"); pinButton.toolTip = note.pinned ? "已列表置顶（点击取消）" : "列表置顶"
         if lastPinned != note.pinned { Theme.bounce(pinButton) }; lastPinned = note.pinned
         if store.state.deleteConflictIDs?.contains(id) == true {
-            conflictLabel.stringValue = "删除未执行：另一端有新内容，已保留" + (note.conflict_of == nil ? "" : "（冲突副本）")
-            noticeButton.title = "知道了"; noticeButton.isEnabled = true
-            banner.isHidden = false; bannerHeight.constant = 38
+            showNotice(warning: true, "删除未执行：另一端有新内容" + (note.conflict_of == nil ? "" : "（副本）"), action: "知道了", enabled: true)
         } else if let originalID = note.conflict_of {
             let original = store.state.notes[originalID]
             let available = original != nil && original?.deleted == false
-            conflictLabel.stringValue = available ? "这是冲突副本，已保留两份内容" : "这是冲突副本，原便签已删除或不可用"
-            noticeButton.title = "查看原件"; noticeButton.isEnabled = available
-            banner.isHidden = false; bannerHeight.constant = 38
+            showNotice(warning: false, available ? "冲突副本 · 两份内容都已保留" : "冲突副本 · 原便签已删除", action: "查看原件", enabled: available)
         } else { banner.isHidden = true; bannerHeight.constant = 0 }
         Theme.button(noticeButton)
         statusLabel.stringValue = store.lastSaved ? store.syncStatus(for: id) : "本地保存失败，请勿退出"
@@ -127,6 +129,18 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         statusLabel.toolTip = store.saveError ?? (store.saveStatus + "；" + store.syncStatus(for: id) + "。已同步表示服务器已接收，另一台电脑须运行应用并联网。")
         syncButton.isEnabled = !store.syncing
         Theme.spin(syncButton, active: store.syncing && store.showSyncProgress)
+    }
+    // Persistent banner above the text: tinted box, icon, short copy; the long explanation is the tooltip.
+    func showNotice(warning: Bool, _ text: String, action: String, enabled: Bool) {
+        bannerIcon.image = Theme.symbol(warning ? "exclamationmark.triangle" : "doc.on.doc", size: 12)
+        bannerIcon.contentTintColor = warning ? NSColor(hex: 0x8A5A00) : Theme.ink
+        banner.layer?.backgroundColor = (warning ? NSColor(hex: 0xFDF1DA) : NSColor.white.withAlphaComponent(0.7)).cgColor
+        banner.layer?.borderColor = (warning ? NSColor(hex: 0xE7CA8A) : Theme.ink.withAlphaComponent(0.2)).cgColor
+        conflictLabel.stringValue = text; conflictLabel.font = .systemFont(ofSize: 12)
+        conflictLabel.toolTip = warning ? "你删除了这条便签，但另一台电脑在此之前改过它，所以保留了新内容。点「知道了」关闭提示。"
+            : "两台电脑同时改了同一条便签，这是另存的一份；两份内容都在，可以对照后删掉不需要的。"
+        noticeButton.title = action; noticeButton.isEnabled = enabled
+        banner.isHidden = false; bannerHeight.constant = 38
     }
     func closeIfDeleted() {
         if closing || editor.hasMarkedText() || compositionBase != nil { return }
@@ -195,7 +209,8 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         let top = menu.addItem(withTitle: "总在最前（仅本机窗口）", action: #selector(setTop), keyEquivalent: "")
         top.target = self; top.state = window.level == .floating ? .on : .off
         menu.addItem(.separator())
-        menu.addItem(withTitle: "删除便签…", action: #selector(deleteNote), keyEquivalent: "").target = self
+        let remove = menu.addItem(withTitle: "删除便签…", action: #selector(deleteNote), keyEquivalent: ""); remove.target = self
+        remove.attributedTitle = NSAttributedString(string: "删除便签…", attributes: [.foregroundColor: NSColor.systemRed, .font: NSFont.menuFont(ofSize: 0)])
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.bounds.minY), in: moreButton)
     }
     @objc func deleteNote() {
@@ -232,13 +247,13 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     let list = NotesListView()
     let status = NSTextField(labelWithString: "正在连接…")
     let empty = NSTextField(labelWithString: "还没有便签\n点右上角 +，记下第一件事")
-    let emptyAction = NSButton(title: "写第一条", target: nil, action: nil)
+    let emptyAction = NSButton(title: "新建便签", target: nil, action: nil)
     let emptyContainer = NSStackView()
     let sectionLabel = NSTextField(labelWithString: "全部便签")
     let filter = NSSegmentedControl(labels: ["全部", "置顶"], trackingMode: .selectOne, target: nil, action: nil)
     let connectionDot = NSView()
-    let syncButton = NSButton()
-    let noticeButton = NSButton()
+    let syncButton = ToolButton()
+    let noticeButton = ToolButton()
     var rows: [Note] = []
     var cards: [String: NoteCardView] = [:]
     var selectedID: String?
@@ -322,8 +337,12 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         let title = NSTextField(labelWithString: "我的便签"); title.font = .systemFont(ofSize: 13, weight: .semibold); title.textColor = Theme.ink
         let heading = NSStackView(views: [title]); heading.alignment = .centerY
         Theme.titlebar(window, view: heading, width: 96, side: .left)
-        let add = Theme.iconButton("plus", label: "新建便签（⌘N）", target: self, action: #selector(newNote)); Theme.button(add, primary: true)
-        let actions = NSStackView(views: [add]); Theme.titlebar(window, view: actions, width: 34, side: .right)
+        // The primary action reads as a labelled button, not another titlebar glyph.
+        let add = ToolButton(title: "新建", image: Theme.symbol("plus", size: 11)!, target: self, action: #selector(newNote))
+        add.imagePosition = .imageLeading; add.setAccessibilityLabel("新建便签"); add.toolTip = "新建便签（⌘N）"
+        add.translatesAutoresizingMaskIntoConstraints = false; Theme.button(add, primary: true)
+        add.widthAnchor.constraint(equalToConstant: 60).isActive = true; add.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        let actions = NSStackView(views: [add]); Theme.titlebar(window, view: actions, width: 64, side: .right)
         let root = NSView(); window.contentView = root
         search.placeholderString = "搜索标题或内容（⌘F）"; search.delegate = self; search.font = .systemFont(ofSize: 13)
         search.controlSize = .regular; search.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(search)
@@ -393,7 +412,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         if lastSyncAt != store.lastSyncAt, store.lastSaved, store.showSyncProgress { Theme.pulse(connectionDot) }; lastSyncAt = store.lastSyncAt
         sectionLabel.stringValue = "\(filter.selectedSegment == 0 ? "全部便签" : "置顶便签") · \(rows.count)"
         emptyContainer.isHidden = !rows.isEmpty
-        empty.stringValue = !query.isEmpty ? "没有找到匹配的便签\n换个关键词试试" : (filter.selectedSegment == 1 ? "还没有置顶便签\n右键便签或点窗口的图钉" : "记下第一件小事\n点右上角 + 开始")
+        empty.stringValue = !query.isEmpty ? "没有找到匹配的便签\n换个关键词试试" : (filter.selectedSegment == 1 ? "还没有置顶便签\n右键便签或点窗口的图钉" : "还没有便签\n随时按 ⌘N 新建一条")
         emptyAction.isHidden = !(rows.isEmpty && query.isEmpty && filter.selectedSegment == 0)
         for editor in Array(editors.values) { editor.refresh() }
     }
