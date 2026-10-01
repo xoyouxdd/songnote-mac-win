@@ -113,6 +113,13 @@ public static class Diagnostics
         }
         var example = fixture.Visible()[0]; controller.Open(example.Id); var window = controller.Editors[example.Id];
         foreach (var width in new[] { 280d, 380, 640 }) { Layout(window, width, 420); Require(window.Editor.ActualHeight > 300, "Editor squeezed by toolbar"); Render(window, Path.Combine(output, $"note-{width:0}.png")); cases++; }
+        // Sticky notes: minimise/close only; the list keeps the full caption set.
+        Require(!window.CanMaximize && window.CaptionButtonCount == 2 && main.CanMaximize && main.CaptionButtonCount == 3, "Caption buttons: note must not offer maximise"); cases++;
+        // A pinned note shows a tinted pin, never the solid ink block that read as a stuck button.
+        Require(example.Pinned && window.PinButton.Background is SolidColorBrush pinFill && pinFill.Color != Theme.Ink && pinFill.Color.A > 0, "Pinned state should be a colour tint"); cases++;
+        var more = controller.NoteMenu(example.Id, window); RenderElement(more, Path.Combine(output, "menu-more.png"), 280);
+        var headers = more.Items.OfType<MenuItem>().Select(i => i.Header as string).ToArray();
+        Require(headers.Contains("删除便签…") && headers.Contains("总在最前（仅本机窗口）") && !headers.Any(h => h?.Contains("最大化") == true), "More menu entries changed"); cases++;
         var conflict = example with { ConflictOf = "missing-original" }; var state = store.Snapshot(); state.Notes[example.Id] = conflict;
         var file = new MemoryStateFile { Data = state }; var conflictStore = new LocalStore(file); using var second = new AppController(conflictStore, null, true); second.Open(example.Id);
         var conflictWindow = second.Editors[example.Id]; Layout(conflictWindow, 280, 240); Require(conflictWindow.Notice.Visibility == Visibility.Visible && conflictWindow.Editor.ActualHeight >= 120, "Conflict notice squeezed editor"); Render(conflictWindow, Path.Combine(output, "note-conflict-min.png")); cases++;
@@ -144,6 +151,11 @@ public static class Diagnostics
         Require(third.Editors.ContainsKey(example.Id) && failureWindow.Editor.IsReadOnly && failureWindow.Footer.Text.Contains("保存失败"), "Failed deletion closed/reopened recursively or hid the save failure");
         Layout(failureWindow, 280, 240); Render(failureWindow, Path.Combine(output, "note-save-failure-min.png")); cases++;
         failureFile.FailWrite = false; Require(failureStore.RetrySave(), "UI fixture could not recover save"); failureWindow.Refresh(); Pump();
+        var vacantStore = new LocalStore(new MemoryStateFile()); using (var vacant = new AppController(vacantStore, null, true))
+        {
+            Layout(vacant.Main, 460, 710); Require(vacant.Main.EmptyStateVisible, "Empty list does not invite a first note");
+            Render(vacant.Main, Path.Combine(output, "list-empty.png")); vacant.Main.Close(); cases++;
+        }
         cases += ScrollBarChecks.Run(output);
         cases += SearchChecks.Run();
         File.WriteAllText(Path.Combine(output, "result.txt"), $"UI_CHECK_OK: {cases} native WPF cases; layout, state safety and scrollbar interaction. No production data/network/startup changes.\n");
@@ -157,6 +169,12 @@ public static class Diagnostics
     static void Pump()
     {
         var frame = new DispatcherFrame(); Application.Current.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => frame.Continue = false)); Dispatcher.PushFrame(frame);
+    }
+    static void RenderElement(FrameworkElement element, string path, double width)
+    {
+        element.Measure(new Size(width, double.PositiveInfinity)); element.Arrange(new Rect(element.DesiredSize)); element.UpdateLayout();
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(element.ActualWidth), (int)Math.Ceiling(element.ActualHeight), 96, 96, PixelFormats.Pbgra32); bitmap.Render(element);
+        var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap)); using var stream = File.Create(path); png.Save(stream);
     }
     static void Render(Window window, string path)
     {

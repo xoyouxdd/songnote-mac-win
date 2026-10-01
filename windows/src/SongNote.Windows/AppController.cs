@@ -40,6 +40,8 @@ public sealed class AppController : IDisposable
             icon = new System.Drawing.Icon(stream); tray = new Forms.NotifyIcon { Icon = icon, Text = "SongNote 便签", ContextMenuStrip = trayMenu, Visible = true };
             tray.DoubleClick += (_, _) => dispatcher.BeginInvoke(new Action(() => ShowList()));
             trayMenu.Opening += (_, _) => BuildTray();
+            trayMenu.Renderer = new Forms.ToolStripProfessionalRenderer(new TrayColors()) { RoundedEdges = false };
+            trayMenu.Font = new System.Drawing.Font("Microsoft YaHei UI", 9f); trayMenu.ShowImageMargin = false; trayMenu.Padding = new Forms.Padding(2, 4, 2, 4);
         }
         Refresh();
     }
@@ -91,20 +93,16 @@ public sealed class AppController : IDisposable
     {
         var note = CurrentNote(id); if (note == null) return new();
         var menu = Theme.ColorsMenu(id, note.Color, Color);
-        var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶" }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
+        var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)
         {
             menu.Items.Add(new Separator());
-            if (window.ActualWidth < 360)
-            {
-                var minimize = new MenuItem { Header = "最小化" }; minimize.Click += (_, _) => SystemCommands.MinimizeWindow(window);
-                var maximize = new MenuItem { Header = "最大化 / 还原" }; maximize.Click += (_, _) => { if (window.WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(window); else SystemCommands.MaximizeWindow(window); };
-                menu.Items.Add(minimize); menu.Items.Add(maximize);
-            }
             var top = new MenuItem { Header = "总在最前（仅本机窗口）", IsCheckable = true, IsChecked = window.Topmost };
             top.Click += (_, _) => { window.Topmost = top.IsChecked; SavePlacement(id, window); }; menu.Items.Add(top);
         }
-        menu.Items.Add(new Separator()); var remove = new MenuItem { Header = "删除便签…" }; remove.Click += (_, _) => Delete(id, window); menu.Items.Add(remove); return menu;
+        menu.Items.Add(new Separator());
+        var remove = new MenuItem { Header = "删除便签…", Foreground = Theme.Brush("#B42318"), Icon = Theme.Glyph("\uE74D", 13, Theme.Brush("#B42318")) };
+        remove.Click += (_, _) => Delete(id, window); menu.Items.Add(remove); return menu;
     }
     public void OpenNotice()
     {
@@ -135,8 +133,13 @@ public sealed class AppController : IDisposable
         trayMenu.Items.Clear();
         void Item(string label, Action action) { var item = trayMenu.Items.Add(label); item.Click += (_, _) => dispatcher.BeginInvoke(action); }
         Item("便签列表", () => ShowList()); Item("新建便签", NewNote); Item("立即同步", () => _ = SyncNow());
-        var pinned = Store.Snapshot().Visible().Where(n => n.Pinned).ToArray(); if (pinned.Length > 0) trayMenu.Items.Add(new Forms.ToolStripSeparator());
-        foreach (var note in pinned) Item("📌 " + note.Title[..Math.Min(note.Title.Length, 32)], () => Open(note.Id));
+        var pinned = Store.Snapshot().Visible().Where(n => n.Pinned).ToArray();
+        if (pinned.Length > 0)
+        {
+            trayMenu.Items.Add(new Forms.ToolStripSeparator());
+            trayMenu.Items.Add(new Forms.ToolStripMenuItem("置顶便签") { Enabled = false });
+        }
+        foreach (var note in pinned) Item("   " + note.Title[..Math.Min(note.Title.Length, 32)], () => Open(note.Id));
         trayMenu.Items.Add(new Forms.ToolStripSeparator());
         Item(Startup.Registered ? "✓ 开机启动（已注册，系统可禁用）" : "开机启动（未注册）", () =>
         {
@@ -160,6 +163,20 @@ public sealed class AppController : IDisposable
     public void Dispose() { Sync.Dispose(); clock.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }
 }
 
+// Warm tray menu colours matching the in-app menus (the default renderer is blue-grey).
+sealed class TrayColors : Forms.ProfessionalColorTable
+{
+    static readonly System.Drawing.Color Hover = System.Drawing.Color.FromArgb(0xEF, 0xEE, 0xE8), Line = System.Drawing.Color.FromArgb(0xD8, 0xD9, 0xD0);
+    public override System.Drawing.Color MenuItemSelected => Hover;
+    public override System.Drawing.Color MenuItemBorder => Hover;
+    public override System.Drawing.Color MenuBorder => Line;
+    public override System.Drawing.Color ToolStripDropDownBackground => System.Drawing.Color.White;
+    public override System.Drawing.Color ImageMarginGradientBegin => System.Drawing.Color.White;
+    public override System.Drawing.Color ImageMarginGradientMiddle => System.Drawing.Color.White;
+    public override System.Drawing.Color ImageMarginGradientEnd => System.Drawing.Color.White;
+    public override System.Drawing.Color SeparatorDark => System.Drawing.Color.FromArgb(0xE6, 0xE5, 0xDE);
+    public override System.Drawing.Color SeparatorLight => System.Drawing.Color.White;
+}
 static class Startup
 {
     const string Key = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";

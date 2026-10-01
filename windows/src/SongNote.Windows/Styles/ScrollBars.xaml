@@ -26,12 +26,12 @@
                 <ControlTemplate TargetType="Thumb">
                     <Grid Background="Transparent">
                         <Border x:Name="Grip" Width="6" Margin="0,2" HorizontalAlignment="Center"
-                                CornerRadius="3" Background="#596159" Opacity="0.42" />
+                                CornerRadius="3" Background="#596159" Opacity="0.26" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Grip" Property="Width" Value="8" />
-                            <Setter TargetName="Grip" Property="Opacity" Value="0.72" />
+                            <Setter TargetName="Grip" Property="Opacity" Value="0.55" />
                         </Trigger>
                         <Trigger Property="IsDragging" Value="True">
                             <Setter TargetName="Grip" Property="Width" Value="8" />
@@ -54,12 +54,12 @@
                 <ControlTemplate TargetType="Thumb">
                     <Grid Background="Transparent">
                         <Border x:Name="Grip" Height="6" Margin="2,0" VerticalAlignment="Center"
-                                CornerRadius="3" Background="#596159" Opacity="0.42" />
+                                CornerRadius="3" Background="#596159" Opacity="0.26" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Grip" Property="Height" Value="8" />
-                            <Setter TargetName="Grip" Property="Opacity" Value="0.72" />
+                            <Setter TargetName="Grip" Property="Opacity" Value="0.55" />
                         </Trigger>
                         <Trigger Property="IsDragging" Value="True">
                             <Setter TargetName="Grip" Property="Height" Value="8" />

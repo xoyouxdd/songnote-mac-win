@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Windows.Controls.Primitives;
 
 namespace SongNote.Windows;
 
@@ -14,10 +15,10 @@ public sealed class NoteWindow : ChromeWindow
         Foreground = new SolidColorBrush(Theme.Ink), IsUndoEnabled = true
     };
     public TextBlock Footer { get; } = Theme.Text("", 11);
-    public Border Notice { get; } = new() { Padding = new Thickness(12, 5, 12, 5) };
-    readonly TextBlock noticeText = Theme.Text("", 11);
-    readonly Button noticeAction = new() { Padding = new Thickness(6, 2, 6, 2), Margin = new Thickness(6, 0, 0, 0) };
-    readonly Button pin, sync;
+    public Border Notice { get; } = new() { Margin = new Thickness(10, 0, 10, 4), Padding = new Thickness(10, 5, 5, 5), CornerRadius = new CornerRadius(6), BorderThickness = new Thickness(1) };
+    readonly TextBlock noticeText = Theme.Text("", 12), noticeIcon = Theme.Glyph("", 14);
+    readonly Button noticeAction = new() { Margin = new Thickness(8, 0, 0, 0), Padding = new Thickness(8, 2, 8, 2), VerticalAlignment = VerticalAlignment.Center };
+    readonly Button pin, sync, more;
     readonly RotateTransform spin = new();
     bool applying, composing, commitPending, suppressComposition;
     bool remoteClose;
@@ -25,16 +26,22 @@ public sealed class NoteWindow : ChromeWindow
     Note? compositionBase;
     bool lastPinned;
     public bool Editing => IsActive && Editor.IsKeyboardFocusWithin;
-    public NoteWindow(AppController controller, Note note)
+    public Button PinButton => pin;
+    public NoteWindow(AppController controller, Note note) : base(maximizable: false)
     {
         this.controller = controller; Id = note.Id; Width = 380; Height = 420; MinWidth = 280; MinHeight = 240;
         Tools.Children.Add(Theme.Icon("\uE710", "新建便签（Ctrl+N）", controller.NewNote));
         Tools.Children.Add(Theme.Icon("\uE8FD", "便签列表（Ctrl+L）", () => controller.ShowList()));
         pin = Theme.Icon("\uE718", "列表置顶", () => controller.Pin(Id)); Tools.Children.Add(pin);
-        var more = Theme.Icon("\uE712", "更多：颜色、总在最前、删除", () => { var menu = controller.NoteMenu(Id, this); menu.PlacementTarget = Tools; menu.IsOpen = true; }); Tools.Children.Add(more);
+        more = Theme.Icon("\uE712", "更多：颜色、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
         var grid = new Grid(); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        noticeText.TextWrapping = TextWrapping.Wrap; var notice = new DockPanel(); DockPanel.SetDock(noticeAction, Dock.Right); notice.Children.Add(noticeAction); notice.Children.Add(noticeText); Notice.Child = notice; grid.Children.Add(Notice);
+        noticeText.TextWrapping = TextWrapping.Wrap; noticeText.Foreground = new SolidColorBrush(Theme.Ink); noticeAction.Style = Theme.Style("SoftButton");
+        noticeIcon.Margin = new Thickness(0, 1, 8, 0); noticeIcon.VerticalAlignment = VerticalAlignment.Top;
+        var notice = new DockPanel(); DockPanel.SetDock(noticeIcon, Dock.Left); DockPanel.SetDock(noticeAction, Dock.Right);
+        notice.Children.Add(noticeIcon); notice.Children.Add(noticeAction); notice.Children.Add(noticeText); Notice.Child = notice; grid.Children.Add(Notice);
         noticeAction.Click += (_, _) => { var state = controller.Store.Snapshot(); if (state.Notes.TryGetValue(Id, out var current) && current.Deleted) _ = controller.SyncNow(); else if (state.DeleteConflictIds.Contains(Id)) controller.Store.Acknowledge(Id); else if (state.Notes.TryGetValue(Id, out var n) && n.ConflictOf != null) controller.Open(n.ConflictOf); };
+        // A calmer writing surface: about 1.55x line height for 16px Chinese text.
+        TextBlock.SetLineHeight(Editor, 25); TextBlock.SetLineStackingStrategy(Editor, LineStackingStrategy.BlockLineHeight);
         Grid.SetRow(Editor, 1); grid.Children.Add(Editor);
         sync = Theme.Icon("\uE895", "立即同步（Ctrl+R）；本机保存失败时先重试", () => _ = controller.SyncNow()); sync.RenderTransform = spin; sync.RenderTransformOrigin = new Point(.5, .5);
         var footer = new Grid { Margin = new Thickness(12, 4, 10, 8) }; footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Children.Add(Footer); Grid.SetColumn(sync, 1); footer.Children.Add(sync); Grid.SetRow(footer, 2); grid.Children.Add(footer); Body.Content = grid;
@@ -71,8 +78,32 @@ public sealed class NoteWindow : ChromeWindow
         Editor.GotKeyboardFocus += (_, _) => controller.Refresh(); Editor.LostKeyboardFocus += (_, _) => controller.Refresh(true);
         Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .55); controller.Refresh(true); };
         Closing += CloseRequested; Closed += (_, _) => { Motion.Spin(spin, false); controller.NoteClosed(Id); };
-        Loaded += (_, _) => SetCompactCaption(ActualWidth < 360); SizeChanged += (_, _) => SetCompactCaption(ActualWidth < 360);
         lastPinned = note.Pinned; Refresh();
+    }
+    public ContextMenu ShowMore()
+    {
+        // Right-align the menu under the "more" button instead of opening at the mouse pointer.
+        var menu = controller.NoteMenu(Id, this); menu.PlacementTarget = more; menu.Placement = PlacementMode.Custom;
+        menu.CustomPopupPlacementCallback = (popup, target, _) => [new CustomPopupPlacement(new Point(target.Width - popup.Width + 10, target.Height + 2), PopupPrimaryAxis.Horizontal)];
+        menu.IsOpen = true; return menu;
+    }
+    void SetNotice(string kind, string text, string action, bool enabled)
+    {
+        (string glyph, string icon, string fill, string line) = kind switch
+        {
+            "danger" => ("\uEA39", "#B42318", "#FBE6E3", "#E9B4AD"),
+            "warning" => ("\uE7BA", "#8A5A00", "#FDF1DA", "#E7CA8A"),
+            _ => ("\uE8C8", "#303633", "#B3FFFFFF", "#33303633")
+        };
+        noticeIcon.Text = glyph; noticeIcon.Foreground = Theme.Brush(icon); Notice.Background = Theme.Brush(fill); Notice.BorderBrush = Theme.Brush(line);
+        noticeText.Text = text; noticeAction.Content = action; noticeAction.IsEnabled = enabled; Notice.Visibility = Visibility.Visible;
+        System.Windows.Automation.AutomationProperties.SetName(Notice, text);
+        Notice.ToolTip = kind switch
+        {
+            "danger" => "本机保存失败，删除还没有生效，正文暂时只读。点「重试保存」再次写入本机。",
+            "warning" => "你删除了这条便签，但另一台电脑在此之前改过它，所以保留了新内容。点「知道了」关闭提示。",
+            _ => "两台电脑同时改了同一条便签，这是另存的一份；两份内容都在，可以对照后删掉不需要的。"
+        };
     }
     public void ChangeColorDuringComposition(string color) { if (compositionBase != null) compositionBase = compositionBase with { Color = color }; }
     public void ChangePinDuringComposition(bool pinned) { if (compositionBase != null) compositionBase = compositionBase with { Pinned = pinned }; }
@@ -132,19 +163,19 @@ public sealed class NoteWindow : ChromeWindow
         Title = note.Title + (note.ConflictOf == null ? "" : " · 冲突副本");
         if (!composing && !commitPending && compositionBase == null && Editor.Text != note.Text) ApplyText(note.Text);
         Motion.Color(Surface, Theme.Paper(note.Color).Color);
-        pin.Foreground = note.Pinned ? Brushes.White : new SolidColorBrush(Theme.Ink); pin.Background = note.Pinned ? new SolidColorBrush(Theme.Ink) : Brushes.Transparent;
-        pin.ToolTip = note.Pinned ? "取消列表置顶" : "列表置顶";
-        pin.Content = Theme.PinIcon(note.Pinned); System.Windows.Automation.AutomationProperties.SetName(pin, (string)pin.ToolTip);
+        // Pinned: filled pin on a tint of the note colour; never a heavy black block on pastel paper.
+        pin.Background = note.Pinned ? Theme.Tint(note.Color, 0x66) : Brushes.Transparent;
+        pin.ToolTip = note.Pinned ? "已列表置顶（点击取消）" : "列表置顶";
+        pin.Content = note.Pinned ? "\uE841" : "\uE718"; System.Windows.Automation.AutomationProperties.SetName(pin, note.Pinned ? "取消列表置顶" : "列表置顶");
         if (lastPinned != note.Pinned) { var scale = new ScaleTransform(1, 1); pin.RenderTransform = scale; pin.RenderTransformOrigin = new Point(.5, .5); Motion.Animate(scale, ScaleTransform.ScaleXProperty, 1.1, 1, 220); Motion.Animate(scale, ScaleTransform.ScaleYProperty, 1.1, 1, 220); } lastPinned = note.Pinned;
         if (note.Deleted && !composing && !commitPending)
-        { noticeText.Text = "便签已标记删除，本机保存失败，暂不可编辑"; noticeAction.Content = "重试保存"; noticeAction.IsEnabled = true; Notice.Visibility = Visibility.Visible; }
+            SetNotice("danger", "保存失败，删除未生效", "重试保存", true);
         else if (state.DeleteConflictIds.Contains(Id))
-        { noticeText.Text = "删除未执行：另一端有新内容，已保留"; noticeAction.Content = "知道了"; noticeAction.IsEnabled = true; Notice.Visibility = Visibility.Visible; }
+            SetNotice("warning", "删除未执行：另一端有新内容", "知道了", true);
         else if (note.ConflictOf != null)
         {
             bool available = state.Notes.TryGetValue(note.ConflictOf, out var original) && !original.Deleted;
-            noticeText.Text = available ? "这是冲突副本，已保留两份内容" : "这是冲突副本，原便签已删除或不可用";
-            noticeAction.Content = "查看原件"; noticeAction.IsEnabled = available; Notice.Visibility = Visibility.Visible;
+            SetNotice("info", available ? "冲突副本 · 两份内容都已保留" : "冲突副本 · 原便签已删除", "查看原件", available);
         }
         else Notice.Visibility = Visibility.Collapsed;
         bool waiting = state.Pending.ContainsKey(Id) || state.FrozenBatch.Any(c => c.NoteId == Id);

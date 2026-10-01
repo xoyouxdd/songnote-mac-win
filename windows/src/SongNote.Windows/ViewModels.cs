@@ -33,7 +33,7 @@ public sealed class MainViewModel : ViewModel
     public bool PinnedOnly { get; set; }
     public string Status { get; private set; } = "";
     public string Section => (PinnedOnly ? "置顶便签" : "全部便签") + " · " + Items.Count(i => !i.Removing);
-    public string Empty => Query.Length > 0 ? "没有找到匹配的便签\n换个关键词试试" : PinnedOnly ? "还没有置顶便签\n右键便签或点窗口图钉" : "记下第一件小事\n点右上角 + 开始";
+    public string Empty => Query.Length > 0 ? "没有找到匹配的便签\n换个关键词试试" : PinnedOnly ? "还没有置顶便签\n右键便签或点窗口图钉" : "还没有便签\n随时按 Ctrl+N 新建一条";
     public void Refresh(LocalState state, string status, bool editing)
     {
         Status = status; Notify(nameof(Status));

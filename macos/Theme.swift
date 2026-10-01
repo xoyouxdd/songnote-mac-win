@@ -12,19 +12,28 @@ import QuartzCore
         "blue": NSColor(hex: 0x4A90D9), "pink": NSColor(hex: 0xE07597), "purple": NSColor(hex: 0x9B7BD8), "gray": NSColor(hex: 0x92928A)]
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     static var presentationFrames: [Int: NSRect] = [:]
-    static func button(_ button: NSButton, primary: Bool = false, active: Bool = false) {
+    // primary: dark filled action. tint: selected state on paper (for example the pinned note).
+    // Tool buttons stay transparent and only show a wash on hover; other buttons are soft outlined chips.
+    static func button(_ button: NSButton, primary: Bool = false, tint: NSColor? = nil) {
         button.isBordered = false; button.wantsLayer = true; button.layer?.cornerRadius = 6
-        let filled = primary || active
-        button.layer?.backgroundColor = (filled ? ink : NSColor.white.withAlphaComponent(0.35)).cgColor
+        let tool = button as? ToolButton
+        let fill: NSColor = primary ? ink : (tint ?? (tool != nil ? .clear : NSColor.white.withAlphaComponent(0.7)))
+        if let tool {
+            tool.hoverColor = primary ? (ink.blended(withFraction: 0.15, of: .white) ?? ink) : (tint.flatMap { $0.blended(withFraction: 0.12, of: ink) } ?? ink.withAlphaComponent(0.09))
+            tool.baseColor = fill
+        } else {
+            button.layer?.backgroundColor = fill.cgColor
+            button.layer?.borderWidth = primary ? 0 : 1; button.layer?.borderColor = ink.withAlphaComponent(0.2).cgColor
+        }
         button.font = .systemFont(ofSize: 12, weight: .medium)
-        button.imageHugsTitle = true; button.contentTintColor = filled ? .white : ink
+        button.imageHugsTitle = true; button.contentTintColor = primary ? .white : ink
         if button.imagePosition == .imageOnly || (button.image != nil && button.title == "Button") {
             button.title = ""; button.imagePosition = .imageOnly
         }
-        button.attributedTitle = NSAttributedString(string: button.title, attributes: [.font: button.font!, .foregroundColor: filled ? NSColor.white : ink])
+        button.attributedTitle = NSAttributedString(string: button.title, attributes: [.font: button.font!, .foregroundColor: primary ? NSColor.white : ink])
     }
     static func iconButton(_ name: String, label: String, target: AnyObject?, action: Selector?) -> NSButton {
-        let button = NSButton(image: symbol(name)!, target: target, action: action)
+        let button = ToolButton(image: symbol(name)!, target: target, action: action)
         button.setAccessibilityLabel(label); button.toolTip = label; button.imagePosition = .imageOnly
         button.translatesAutoresizingMaskIntoConstraints = false; Theme.button(button)
         button.widthAnchor.constraint(equalToConstant: 22).isActive = true
@@ -167,6 +176,20 @@ final class ColorPickerView: NSView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     @objc func pick(_ sender: NSButton) { onPick(colorOrder[sender.tag]) }
+}
+
+// Transparent titlebar/footer icon: a light wash on hover instead of a permanent white box.
+final class ToolButton: NSButton {
+    var baseColor: NSColor = .clear { didSet { paint() } }
+    var hoverColor: NSColor = Theme.ink.withAlphaComponent(0.09)
+    private var hovering = false
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); for area in trackingAreas { removeTrackingArea(area) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { hovering = true; paint() }
+    override func mouseExited(with event: NSEvent) { hovering = false; paint() }
+    func paint() { layer?.backgroundColor = (hovering && isEnabled ? hoverColor : baseColor).cgColor }
 }
 
 // Some IMEs unmark without another textDidChange notification.
