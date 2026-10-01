@@ -24,7 +24,12 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     var didClose: ((String) -> Void)?
     var didFinishEditing: (() -> Void)?
     var lastPinned = false
-    var compositionBase: Note?
+    var closing = false
+    var composition: NoteComposition?
+    var compositionBase: Note? {
+        get { composition?.note }
+        set { composition = newValue.map { NoteComposition($0) } }
+    }
     init(note: Note, store: Store, present: Bool = true, cascadeFrom: NSWindow? = nil) {
         id = note.id; self.store = store
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 380, height: 420),
@@ -82,6 +87,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
             scroll.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -4),
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)])
+        lastPinned = note.pinned
         refresh()
         if present { Theme.presentNew(window); window.makeFirstResponder(editor) }
     }
@@ -89,7 +95,10 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         guard let note = store.state.notes[id] else { return }
         // Do not close or replace an editor during marked text composition.
         // The committed text will be saved against the current revision next.
-        if note.deleted && !editor.hasMarkedText() && compositionBase == nil { window.close(); return }
+        if note.deleted {
+            closeIfDeleted()
+            if closing { return }
+        }
         window.title = String(note.title.prefix(40)) + (note.conflict_of == nil ? "" : " · 冲突副本")
         if !editor.hasMarkedText(), compositionBase == nil, editor.string != note.text {
             let selected = editor.selectedRange(); editor.string = note.text
@@ -119,25 +128,22 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         syncButton.isEnabled = !store.syncing
         Theme.spin(syncButton, active: store.syncing && store.showSyncProgress)
     }
+    func closeIfDeleted() {
+        if closing || editor.hasMarkedText() || compositionBase != nil { return }
+        guard store.state.notes[id]?.deleted == true else { return }
+        closing = true
+        window.close()
+    }
     func remap(to newID: String) {
         let oldID = id; id = newID
-        if var base = compositionBase {
-            base.id = newID; base.revision = store.state.notes[newID]?.revision ?? base.revision
-            base.conflict_of = store.state.notes[newID]?.conflict_of ?? base.conflict_of; compositionBase = base
-        }
+        composition?.remap(to: newID, revision: store.state.notes[newID]?.revision,
+                           conflictOf: store.state.notes[newID]?.conflict_of)
         let defaults = UserDefaults.standard
         defaults.set(defaults.bool(forKey: "top-" + oldID), forKey: "top-" + newID)
         window.setFrameAutosaveName("note-" + newID); window.saveFrame(usingName: "note-" + newID)
     }
     func accept(_ receipts: [Receipt], sent: [Change]) {
-        guard var base = compositionBase else { return }
-        for receipt in receipts where receipt.status == "applied" && receipt.note_id == base.id {
-            guard let submitted = sent.first(where: { $0.op_id == receipt.op_id }),
-                  submitted.note_id == base.id, submitted.text == base.text,
-                  submitted.color == base.color, submitted.pinned == base.pinned, submitted.deleted == base.deleted else { continue }
-            base.revision = receipt.revision
-        }
-        compositionBase = base
+        composition?.accept(receipts, sent: sent)
     }
     @objc func returnToList() { showList?() }
     @objc func createNote() { newNote?() }
@@ -163,13 +169,16 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         editor.inputContext?.discardMarkedText(); editor.unmarkText()
         compositionBase = nil; editor.string = committed
     }
+    func writeComposition(pinned: Bool? = nil, color: String? = nil) {
+        composition?.update(pinned: pinned, color: color)
+    }
     @objc func setPin() {
         guard var note = store.state.notes[id] else { return }; note.pinned.toggle()
-        compositionBase?.pinned = note.pinned; store.update(note)
+        writeComposition(pinned: note.pinned); store.update(note)
     }
     @objc func setColor(_ sender: NSMenuItem) {
         guard let data = sender.representedObject as? [String: String], let value = data["color"], var note = store.state.notes[id], note.color != value else { return }
-        note.color = value; compositionBase?.color = value; store.update(note)
+        note.color = value; writeComposition(color: value); store.update(note)
     }
     @objc func setTop() {
         let top = window.level != .floating; window.level = top ? .floating : .normal
@@ -194,14 +203,18 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         alert.addButton(withTitle: "删除"); alert.addButton(withTitle: "取消")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self, var note = self.store.state.notes[self.id] else { return }
-            note.deleted = true; self.store.update(note); self.window.close()
+            let composing = self.editor.hasMarkedText() || self.compositionBase != nil
+            note.deleted = true; self.store.update(note)
+            if composing, self.window.isVisible { self.window.close() }
         }
     }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        closing = true
         prepareForClose()
         guard store.lastSaved else {
             let alert = NSAlert(); alert.messageText = "本地保存失败，请先重试保存"
-            alert.informativeText = store.saveError ?? "内容尚未安全保存。"; alert.runModal(); return false
+            alert.informativeText = store.saveError ?? "内容尚未安全保存。"; alert.runModal()
+            closing = false; return false
         }
         return true
     }
@@ -219,6 +232,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     let list = NotesListView()
     let status = NSTextField(labelWithString: "正在连接…")
     let empty = NSTextField(labelWithString: "还没有便签\n点右上角 +，记下第一件事")
+    let emptyAction = NSButton(title: "写第一条", target: nil, action: nil)
     let emptyContainer = NSStackView()
     let sectionLabel = NSTextField(labelWithString: "全部便签")
     let filter = NSSegmentedControl(labels: ["全部", "置顶"], trackingMode: .selectOne, target: nil, action: nil)
@@ -333,8 +347,12 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         footer.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(footer)
         let emptyIcon = NSImageView(image: Theme.symbol("square.and.pencil", size: 32)!); emptyIcon.contentTintColor = Theme.muted
         empty.alignment = .center; empty.font = .systemFont(ofSize: 13); empty.textColor = Theme.muted; empty.maximumNumberOfLines = 3
+        emptyAction.target = self; emptyAction.action = #selector(newNote); Theme.button(emptyAction, primary: true)
+        emptyAction.translatesAutoresizingMaskIntoConstraints = false
+        emptyAction.widthAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        emptyAction.heightAnchor.constraint(equalToConstant: 28).isActive = true
         emptyContainer.orientation = .vertical; emptyContainer.alignment = .centerX; emptyContainer.spacing = 12
-        emptyContainer.addArrangedSubview(emptyIcon); emptyContainer.addArrangedSubview(empty)
+        emptyContainer.addArrangedSubview(emptyIcon); emptyContainer.addArrangedSubview(empty); emptyContainer.addArrangedSubview(emptyAction)
         emptyContainer.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(emptyContainer)
         NSLayoutConstraint.activate([
             search.topAnchor.constraint(equalTo: root.topAnchor, constant: 10), search.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16), search.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16), search.heightAnchor.constraint(equalToConstant: 28),
@@ -355,7 +373,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         let changedOrder = rows.map(\.id) != nextRows.map(\.id); rows = nextRows
         for note in rows {
             if cards[note.id] == nil { cards[note.id] = makeCard(note) }
-            cards[note.id]?.update(note, pending: store.state.pending[note.id] != nil, deleteConflict: store.state.deleteConflictIDs?.contains(note.id) == true)
+            cards[note.id]?.update(note, pending: store.state.pending[note.id] != nil, deleteConflict: store.state.deleteConflictIDs?.contains(note.id) == true, query: query)
         }
         if changedOrder {
             let previousSelection = selectedID
@@ -376,6 +394,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         sectionLabel.stringValue = "\(filter.selectedSegment == 0 ? "全部便签" : "置顶便签") · \(rows.count)"
         emptyContainer.isHidden = !rows.isEmpty
         empty.stringValue = !query.isEmpty ? "没有找到匹配的便签\n换个关键词试试" : (filter.selectedSegment == 1 ? "还没有置顶便签\n右键便签或点窗口的图钉" : "记下第一件小事\n点右上角 + 开始")
+        emptyAction.isHidden = !(rows.isEmpty && query.isEmpty && filter.selectedSegment == 0)
         for editor in Array(editors.values) { editor.refresh() }
     }
     func makeCard(_ note: Note) -> NoteCardView {
@@ -404,11 +423,11 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     }
     @objc func pinFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, var note = store.state.notes[id], !note.deleted else { return }
-        note.pinned.toggle(); store.update(note)
+        note.pinned.toggle(); editors[id]?.writeComposition(pinned: note.pinned); store.update(note)
     }
     @objc func colorFromMenu(_ sender: NSMenuItem) {
         guard let data = sender.representedObject as? [String: String], let id = data["id"], let color = data["color"], var note = store.state.notes[id], !note.deleted, note.color != color else { return }
-        note.color = color; store.update(note)
+        note.color = color; editors[id]?.writeComposition(color: color); store.update(note)
     }
     @objc func deleteFromMenu(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let note = store.state.notes[id], !note.deleted else { return }

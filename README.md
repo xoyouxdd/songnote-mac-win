@@ -18,7 +18,7 @@ Mac 编译：`scripts/build-mac.sh`。需要 macOS Command Line Tools；输出�
 
 Mac 数据目录：`~/Library/Application Support/SongNote`。每次正式输入写入本机，服务每 3 秒同步；中文候选文字暂不保存。未编辑空草稿只留本机，关窗丢弃。标题栏提供新建、列表、列表置顶、更多；更多包含六色选择、总在最前和删除。底部一行状态及立即同步，冲突和拒绝删除在正文上方持续提示。⌘F 搜索，列表支持键盘和右键操作；宽窗口自动双列。关闭窗口后仍在菜单栏运行，菜单可直接打开置顶便签或切换开机启动；Command-Q 退出。
 
-Mac UI 源码已在 Windows 更新，Mac 编译/原生布局/真机体验尚待验证，见 [续作与验收](docs/UI_OPTIMIZATION_HANDOFF.md)。旧截图不作为本轮证据。Windows 首版已实现，构建、22 项核心测试、Node 回环协议及 15 项 WPF 检查通过；运行方式和未验收项见 [Windows 验证记录](windows/VALIDATION.md)。
+Mac UI 源码已在 Windows 更新，Mac 编译/原生布局/真机体验尚待验证，见 [续作与验收](docs/UI_OPTIMIZATION_HANDOFF.md)。旧截图不作为本轮证据。Windows 首版及 Grok 优化修复已实现，构建、25 项核心测试、Node 回环协议及 36 项 WPF 检查通过；运行方式和未验收项见 [Windows 验证记录](windows/VALIDATION.md)。
 
 验证：
 

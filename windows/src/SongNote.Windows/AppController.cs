@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Windows.Shell;
 using Forms = System.Windows.Forms;
 
 namespace SongNote.Windows;
@@ -77,7 +78,7 @@ public sealed class AppController : IDisposable
         Main.Show(); Main.Activate(); if (search) Main.Search.Focus(); Refresh(true);
     }
     public async Task SyncNow() { foreach (var editor in Editors.Values.ToArray()) editor.SaveText(); await Sync.Sync(force: true); }
-    public void Pin(string id) { Store.TogglePin(id); Sync.AfterEdit(); }
+    public void Pin(string id) { Store.TogglePin(id); if (Editors.TryGetValue(id, out var window) && CurrentNote(id) is Note note) window.ChangePinDuringComposition(note.Pinned); Sync.AfterEdit(); }
     public void Color(string id, string color) { Store.SetColor(id, color); if (Editors.TryGetValue(id, out var window)) window.ChangeColorDuringComposition(color); Sync.AfterEdit(); }
     public void Delete(string id, Window? owner = null)
     {
@@ -93,7 +94,14 @@ public sealed class AppController : IDisposable
         var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶" }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)
         {
-            menu.Items.Add(new Separator()); var top = new MenuItem { Header = "总在最前（仅本机窗口）", IsCheckable = true, IsChecked = window.Topmost };
+            menu.Items.Add(new Separator());
+            if (window.ActualWidth < 360)
+            {
+                var minimize = new MenuItem { Header = "最小化" }; minimize.Click += (_, _) => SystemCommands.MinimizeWindow(window);
+                var maximize = new MenuItem { Header = "最大化 / 还原" }; maximize.Click += (_, _) => { if (window.WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(window); else SystemCommands.MaximizeWindow(window); };
+                menu.Items.Add(minimize); menu.Items.Add(maximize);
+            }
+            var top = new MenuItem { Header = "总在最前（仅本机窗口）", IsCheckable = true, IsChecked = window.Topmost };
             top.Click += (_, _) => { window.Topmost = top.IsChecked; SavePlacement(id, window); }; menu.Items.Add(top);
         }
         menu.Items.Add(new Separator()); var remove = new MenuItem { Header = "删除便签…" }; remove.Click += (_, _) => Delete(id, window); menu.Items.Add(remove); return menu;

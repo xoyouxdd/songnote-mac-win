@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Globalization;
 using SongNote.Core;
 
 static class Tests
@@ -22,6 +23,32 @@ static class Tests
         {
             if (!args.Contains("--integration-only"))
             {
+            Test("Unicode highlight spans use original-text lengths and preserve search semantics", () =>
+            {
+                var savedCulture = CultureInfo.CurrentCulture;
+                try
+                {
+                    CultureInfo.CurrentCulture = CultureInfo.GetCultureInfo("zh-Hans-HK");
+                    Check(SearchMatches.Find("é", "e\u0301").Single() == new TextMatch(0, 1));
+                    Check(SearchMatches.Find("e\u0301", "é").Single() == new TextMatch(0, 2));
+                    Check(SearchMatches.Find("abc", "abc\u00ad").Single() == new TextMatch(0, 3));
+                    Check(SearchMatches.Find("é é", "e\u0301").SequenceEqual(new[] { new TextMatch(0, 1), new TextMatch(2, 1) }));
+                    Check(SearchMatches.Find("abc", "\u00ad").Count == 0);
+                    Check(SearchMatches.Find("中文 📝", "📝").Single() == new TextMatch(3, 2));
+                    Check(SearchMatches.Find("abc", "").Count == 0 && SearchMatches.Find("", "x").Count == 0);
+                }
+                finally { CultureInfo.CurrentCulture = savedCulture; }
+            });
+            Test("blank leading lines stay out of the card title", () =>
+            {
+                var leading = new Note("id", "\r\n周五前交周报", "yellow", false, 0, "t", false);
+                Check(leading.Title == "周五前交周报" && leading.DisplayLines.Length == 1);
+                var body = new Note("id", "周五前交周报\r\n整理数据", "yellow", false, 0, "t", false);
+                Check(body.Title == "周五前交周报" && string.Join(" ", body.DisplayLines.Skip(1)) == "整理数据");
+                var spaced = new Note("id", "  \n\n买菜\n鸡蛋", "yellow", false, 0, "t", false);
+                Check(spaced.Title == "买菜" && string.Join(" ", spaced.DisplayLines.Skip(1)) == "鸡蛋");
+                Check(new Note("id", "", "yellow", false, 0, "t", false).Title == "新便签");
+            });
             Test("snake_case contracts and configuration validation", () =>
             {
                 var change = Change.From(Note.Blank()); var json = ProtocolJson.Encode(new SyncRequest("test-device", [change]));
@@ -177,6 +204,16 @@ static class Tests
                 using var sync = new SyncService(store, new("https://example.invalid", new string('x', 32)), new HttpClient(server));
                 await Task.WhenAll(sync.Sync(true), sync.Sync(true), sync.Sync(true)); Check(server.Requests.Count == 1);
             });
+            await Test("invalid 200 response stays inside Sync and keeps the frozen operation", async () =>
+            {
+                var store = New(out _); var note = store.CreateDraft(); store.SetText(note.Id, "不能丢"); var frozen = store.Freeze().Changes;
+                using var sync = new SyncService(store, new("https://example.invalid", new string('x', 32)), new HttpClient(new FixedBody("{\"protocol\":1,\"sequence\":1,\"notes\":[],\"results\":[]}")));
+                await sync.Sync(true);
+                Check(!sync.Syncing && sync.Status != "正在同步…" && sync.Error != null && sync.Error.Contains("无效"));
+                Check(store.Snapshot().FrozenBatch.SequenceEqual(frozen));
+                await sync.Sync(true);
+                Check(!sync.Syncing && sync.Status != "正在同步…" && sync.Error != null && sync.Error.Contains("无效") && store.Snapshot().FrozenBatch.SequenceEqual(frozen));
+            });
             }
             var endpoint = args.SkipWhile(a => a != "--integration").Skip(1).FirstOrDefault();
             if (endpoint != null)
@@ -205,6 +242,13 @@ sealed class MemoryFile : IStateFile
     public bool Fail;
     public LocalState? Read() => Data?.Copy();
     public void Write(LocalState state) { if (Fail) throw new IOException("Injected disk failure"); Data = state.Copy(); }
+}
+sealed class FixedBody : HttpMessageHandler
+{
+    readonly string body;
+    public FixedBody(string body) => this.body = body;
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation) =>
+        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
 }
 sealed class FakeServer : HttpMessageHandler
 {

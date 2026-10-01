@@ -219,14 +219,32 @@ final class NoteCardView: NSView {
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityHelp("打开便签；方向键移动，回车打开，右键管理")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    func update(_ note: Note, pending: Bool, deleteConflict: Bool) {
+    func update(_ note: Note, pending: Bool, deleteConflict: Bool, query: String = "") {
         id = note.id; paper = Theme.palette[note.color] ?? Theme.palette["yellow"]!; accent = Theme.accents[note.color] ?? Theme.ink
         Theme.background(layer, color: hovered ? paper.blended(withFraction: 0.14, of: .white)! : paper)
         stripe.layer?.backgroundColor = accent.cgColor; updateBorder()
-        title.stringValue = String(note.title.prefix(90))
-        preview.stringValue = String(note.preview.prefix(130))
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        showMatch(title, String(note.title.prefix(90)), query: trimmed, font: .systemFont(ofSize: 15, weight: .semibold), color: Theme.ink)
+        showMatch(preview, String(note.preview.prefix(130)), query: trimmed, font: .systemFont(ofSize: 13), color: Theme.muted)
         hint.stringValue = (deleteConflict ? "删除未执行 · " : "") + (note.conflict_of != nil ? "冲突副本 · " : (note.pinned ? "置顶 · " : "")) + Theme.timestamp(note.updated_at) + (pending ? " · 待同步" : "")
         hint.toolTip = hint.stringValue; setAccessibilityLabel(String(note.title.prefix(90)) + "，" + hint.stringValue)
+    }
+    func showMatch(_ label: NSTextField, _ text: String, query: String, font: NSFont, color: NSColor) {
+        guard !query.isEmpty else { label.stringValue = text; return }
+        let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
+        let styled = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
+        let ns = text as NSString
+        let hit = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
+        let wash = NSColor(hex: 0xE8B931).withAlphaComponent(0.45)
+        var span = NSRange(location: 0, length: ns.length)
+        while span.length > 0 {
+            let found = ns.range(of: query, options: .caseInsensitive, range: span)
+            if found.location == NSNotFound || found.length == 0 { break }
+            styled.addAttributes([.font: hit, .backgroundColor: wash], range: found)
+            let next = found.location + found.length
+            span = NSRange(location: next, length: ns.length - next)
+        }
+        label.attributedStringValue = styled
     }
     func updateBorder() {
         layer?.borderWidth = selected ? 1.5 : 1

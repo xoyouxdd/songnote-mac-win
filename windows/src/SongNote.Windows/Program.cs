@@ -145,6 +145,7 @@ public static class Diagnostics
         Layout(failureWindow, 280, 240); Render(failureWindow, Path.Combine(output, "note-save-failure-min.png")); cases++;
         failureFile.FailWrite = false; Require(failureStore.RetrySave(), "UI fixture could not recover save"); failureWindow.Refresh(); Pump();
         cases += ScrollBarChecks.Run(output);
+        cases += SearchChecks.Run();
         File.WriteAllText(Path.Combine(output, "result.txt"), $"UI_CHECK_OK: {cases} native WPF cases; layout, state safety and scrollbar interaction. No production data/network/startup changes.\n");
         main.Close(); window.Close(); second.Main.Close(); conflictWindow.Close();
     }

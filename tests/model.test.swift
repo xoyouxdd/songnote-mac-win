@@ -18,6 +18,31 @@ import Foundation
         display.text = longTitle + "\r\n正文\n第二段\r第三段"
         assert(display.title == longTitle && display.preview == "正文 第二段 第三段")
         print("NOTE_DISPLAY_TESTS_OK: LF/CRLF/CR/Unicode newlines, blank lines, long titles, original payload preserved")
+        var anchor = Note.blank(); anchor.text = "请求中的正文"; anchor.revision = 5
+        let beforeMenu = Change(anchor)
+        var composing = NoteComposition(anchor)
+        composing.update(pinned: true, color: "green")
+        composing.accept([Receipt(op_id: beforeMenu.op_id, note_id: anchor.id, revision: 6, status: "applied")], sent: [beforeMenu])
+        assert(composing.note.revision == 6 && composing.note.color == "green" && composing.note.pinned)
+        assert(composing.base.color == "yellow" && !composing.base.pinned)
+        var committed = composing.note; committed.text += "正式选字"
+        assert(Change(committed).base_revision == 6)
+        // Do not advance an edit through a successful/rejected tombstone.
+        var deletedAnchor = anchor; deletedAnchor.deleted = true
+        let deleting = Change(deletedAnchor)
+        var lateText = NoteComposition(anchor)
+        lateText.accept([Receipt(op_id: deleting.op_id, note_id: anchor.id, revision: 7, status: "applied")], sent: [deleting])
+        lateText.accept([Receipt(op_id: beforeMenu.op_id, note_id: anchor.id, revision: 8, status: "delete_conflict")], sent: [beforeMenu])
+        assert(lateText.note.revision == 5)
+        composing.remap(to: "composition-copy", revision: 9, conflictOf: anchor.id)
+        assert(composing.note.id == "composition-copy" && composing.note.revision == 9 && composing.note.conflict_of == anchor.id)
+        assert(composing.note.color == "green" && composing.note.pinned)
+        // A later local edit on the same base follows its own accepted operation.
+        var later = anchor; later.text += "本机后续修改"
+        var chain = NoteComposition(later)
+        chain.accept([Receipt(op_id: beforeMenu.op_id, note_id: anchor.id, revision: 6, status: "applied")], sent: [beforeMenu])
+        assert(chain.note.revision == 6 && chain.note.text == later.text)
+        print("COMPOSITION_TESTS_OK: menu overrides, applied receipts, tombstones, remap and later local edits")
         var original = Note.blank(); original.text = "原始"; original.revision = 5
         let submitted = Change(original)
         var state = LocalState(); state.notes[original.id] = original; state.pending[original.id] = submitted

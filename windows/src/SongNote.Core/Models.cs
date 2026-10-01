@@ -6,7 +6,8 @@ namespace SongNote.Core;
 public sealed record Note(string Id, string Text, string Color, bool Pinned, int Revision,
     string UpdatedAt, bool Deleted, string? ConflictOf = null)
 {
-    [JsonIgnore] public string Title => Text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.TrimEnd('\r') ?? "新便签";
+    [JsonIgnore] public string[] DisplayLines => Text.Split(['\r', '\n', '\u2028', '\u2029'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    [JsonIgnore] public string Title => DisplayLines.FirstOrDefault() ?? "新便签";
     public static Note Blank() => new(Guid.NewGuid().ToString(), "", "yellow", false, 0, DateTimeOffset.UtcNow.ToString("O"), false);
 }
 public sealed record Change(string OpId, string NoteId, int BaseRevision, string Text, string Color, bool Pinned, bool Deleted)

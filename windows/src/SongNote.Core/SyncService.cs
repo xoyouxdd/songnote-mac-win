@@ -71,10 +71,10 @@ public sealed class SyncService : IDisposable
             Status = current.Pending.Count > 0 ? "已保存到本机 · 等待同步" : $"已同步 · {LastSyncAt:HH:mm}";
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or System.Text.Json.JsonException or SyncFailure)
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException or System.Text.Json.JsonException or SyncFailure or InvalidDataException)
         {
             failures++; retryAfter = DateTimeOffset.UtcNow.AddSeconds(Math.Min(30, Math.Pow(2, Math.Min(failures, 5))));
-            Error = e is HttpRequestException or TaskCanceledException ? "离线 · 内容已保存在本机" : e is SyncFailure ? e.Message : "同步响应或本地保存失败 · 保留队列待重试";
+            Error = e is InvalidDataException ? "同步响应无效 · 稍后重试" : e is HttpRequestException or TaskCanceledException ? "离线 · 内容已保存在本机" : e is SyncFailure ? e.Message : "同步响应或本地保存失败 · 保留队列待重试";
             Status = Error;
         }
         finally { Syncing = false; single.Release(); Changed?.Invoke(); }

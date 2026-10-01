@@ -41,6 +41,37 @@ struct Receipt: Codable {
 }
 struct SyncRequest: Codable { var device_id: String; var changes: [Change] }
 struct SyncResponse: Codable { var `protocol`: Int; var sequence: Int; var notes: [Note]; var results: [Receipt] }
+// Transient editor state, never persisted or sent as a protocol field.
+// Menu overrides are separate from the revision anchor of the local edit chain.
+struct NoteComposition {
+    private(set) var base: Note
+    private var colorOverride: String?
+    private var pinOverride: Bool?
+    init(_ note: Note) { base = note }
+    var note: Note {
+        var result = base
+        if let colorOverride { result.color = colorOverride }
+        if let pinOverride { result.pinned = pinOverride }
+        return result
+    }
+    mutating func update(pinned: Bool? = nil, color: String? = nil) {
+        if let pinned { pinOverride = pinned }
+        if let color { colorOverride = color }
+    }
+    mutating func accept(_ receipts: [Receipt], sent: [Change]) {
+        for receipt in receipts where receipt.status == "applied" && receipt.note_id == base.id {
+            guard let submitted = sent.first(where: { $0.op_id == receipt.op_id }),
+                  submitted.note_id == base.id, !submitted.deleted,
+                  submitted.base_revision == base.revision else { continue }
+            base.revision = receipt.revision
+        }
+    }
+    mutating func remap(to id: String, revision: Int?, conflictOf: String?) {
+        base.id = id
+        if let revision { base.revision = revision }
+        base.conflict_of = conflictOf ?? base.conflict_of
+    }
+}
 struct Configuration: Codable { var base_url: String; var token: String }
 struct LocalState: Codable {
     var device_id = UUID().uuidString

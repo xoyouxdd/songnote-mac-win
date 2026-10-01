@@ -30,7 +30,7 @@ public sealed class NoteWindow : ChromeWindow
         this.controller = controller; Id = note.Id; Width = 380; Height = 420; MinWidth = 280; MinHeight = 240;
         Tools.Children.Add(Theme.Icon("\uE710", "新建便签（Ctrl+N）", controller.NewNote));
         Tools.Children.Add(Theme.Icon("\uE8FD", "便签列表（Ctrl+L）", () => controller.ShowList()));
-        pin = Theme.Icon("\uE718", "列表置顶", () => { controller.Pin(Id); if (compositionBase != null) compositionBase = compositionBase with { Pinned = controller.CurrentNote(Id)?.Pinned ?? compositionBase.Pinned }; }); Tools.Children.Add(pin);
+        pin = Theme.Icon("\uE718", "列表置顶", () => controller.Pin(Id)); Tools.Children.Add(pin);
         var more = Theme.Icon("\uE712", "更多：颜色、总在最前、删除", () => { var menu = controller.NoteMenu(Id, this); menu.PlacementTarget = Tools; menu.IsOpen = true; }); Tools.Children.Add(more);
         var grid = new Grid(); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         noticeText.TextWrapping = TextWrapping.Wrap; var notice = new DockPanel(); DockPanel.SetDock(noticeAction, Dock.Right); notice.Children.Add(noticeAction); notice.Children.Add(noticeText); Notice.Child = notice; grid.Children.Add(Notice);
@@ -71,9 +71,11 @@ public sealed class NoteWindow : ChromeWindow
         Editor.GotKeyboardFocus += (_, _) => controller.Refresh(); Editor.LostKeyboardFocus += (_, _) => controller.Refresh(true);
         Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .55); controller.Refresh(true); };
         Closing += CloseRequested; Closed += (_, _) => { Motion.Spin(spin, false); controller.NoteClosed(Id); };
-        Refresh();
+        Loaded += (_, _) => SetCompactCaption(ActualWidth < 360); SizeChanged += (_, _) => SetCompactCaption(ActualWidth < 360);
+        lastPinned = note.Pinned; Refresh();
     }
     public void ChangeColorDuringComposition(string color) { if (compositionBase != null) compositionBase = compositionBase with { Color = color }; }
+    public void ChangePinDuringComposition(bool pinned) { if (compositionBase != null) compositionBase = compositionBase with { Pinned = pinned }; }
     public void Remap(string id, Receipt[] receipts, Change[] sent)
     {
         if (Id != id)

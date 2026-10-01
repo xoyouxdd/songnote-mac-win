@@ -1,6 +1,7 @@
 using System.Windows.Automation;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Shell;
 
 namespace SongNote.Windows;
@@ -12,6 +13,8 @@ public class ChromeWindow : Window
     protected StackPanel Tools { get; } = new() { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
     protected ContentControl Body { get; } = new();
     protected SolidColorBrush Surface { get; } = Theme.Brush("#F6F5F0");
+    readonly Button minimize, maximize;
+    public void SetCompactCaption(bool compact) => minimize.Visibility = maximize.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
     public ChromeWindow()
     {
         WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.CanResize; Background = Surface;
@@ -23,8 +26,9 @@ public class ChromeWindow : Window
         header.ColumnDefinitions.Add(new ColumnDefinition()); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(Heading); Grid.SetColumn(Tools, 1); header.Children.Add(Tools);
         var system = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(4, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        system.Children.Add(Theme.Icon("\uE921", "最小化", () => SystemCommands.MinimizeWindow(this), 30));
-        system.Children.Add(Theme.Icon("\uE922", "最大化 / 还原", () => { if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this); else SystemCommands.MaximizeWindow(this); }, 30));
+        minimize = Theme.Icon("\uE921", "最小化", () => SystemCommands.MinimizeWindow(this), 30);
+        maximize = Theme.Icon("\uE922", "最大化 / 还原", () => { if (WindowState == WindowState.Maximized) SystemCommands.RestoreWindow(this); else SystemCommands.MaximizeWindow(this); }, 30);
+        system.Children.Add(minimize); system.Children.Add(maximize);
         system.Children.Add(Theme.Icon("\uE8BB", "关闭窗口", () => SystemCommands.CloseWindow(this), 30));
         Grid.SetColumn(system, 2); header.Children.Add(system); LayoutRoot.Children.Add(header);
         Grid.SetRow(Body, 1); LayoutRoot.Children.Add(Body);
@@ -55,17 +59,23 @@ public sealed class ResponsiveNotesPanel : Panel
     {
         double width = double.IsInfinity(available.Width) ? Math.Max(360, ActualWidth) : available.Width;
         Columns = width >= 620 ? 2 : 1;
-        double column = Math.Max(0, (width - (Columns - 1) * 8) / Columns);
-        foreach (UIElement child in InternalChildren) child.Measure(new Size(column, 84));
-        int rows = (InternalChildren.Count + Columns - 1) / Columns;
+        double column = Math.Max(0, (width - (Columns - 1) * 8) / Columns); int live = 0;
+        foreach (UIElement child in InternalChildren) { child.Measure(new Size(column, 84)); if (Live(child)) live++; }
+        int rows = (live + Columns - 1) / Columns;
         return new Size(width, Math.Max(0, rows * 92 - 8));
     }
     protected override Size ArrangeOverride(Size final)
     {
-        double column = Math.Max(0, (final.Width - (Columns - 1) * 8) / Columns); var next = new Dictionary<UIElement, Rect>();
+        double column = Math.Max(0, (final.Width - (Columns - 1) * 8) / Columns); var next = new Dictionary<UIElement, Rect>(); int slot = 0;
         for (int i = 0; i < InternalChildren.Count; i++)
         {
-            var child = InternalChildren[i]; var rect = new Rect((i % Columns) * (column + 8), (i / Columns) * 92, column, 84);
+            var child = InternalChildren[i];
+            Rect rect;
+            if (!Live(child))
+            {
+                if (!previous.TryGetValue(child, out rect)) { var offset = VisualTreeHelper.GetOffset(child); rect = new Rect(offset.X, offset.Y, column, 84); }
+            }
+            else { rect = new Rect((slot % Columns) * (column + 8), (slot / Columns) * 92, column, 84); slot++; }
             child.Arrange(rect); next[child] = rect;
             if (Motion.Enabled && previous.TryGetValue(child, out var old) && old.TopLeft != rect.TopLeft)
             {
@@ -77,6 +87,7 @@ public sealed class ResponsiveNotesPanel : Panel
         }
         previous = next; return final;
     }
+    static bool Live(UIElement child) => NoteCard.Descendant<NoteCard>(child)?.Removing != true;
 }
 
 public sealed class NoteCard : UserControl
@@ -85,7 +96,8 @@ public sealed class NoteCard : UserControl
     readonly Border stripe = new() { Width = 4, HorizontalAlignment = HorizontalAlignment.Left };
     readonly TextBlock title = Theme.Text("", 15, true), preview = Theme.Text("", 13), hint = Theme.Text("", 11);
     readonly SolidColorBrush paper = Theme.Brush("#FFF5C9");
-    bool pressed;
+    bool pressed, hovered, wasRemoving;
+    public bool Removing { get; private set; }
     NoteViewModel? model;
     public NoteCard()
     {
@@ -99,8 +111,8 @@ public sealed class NoteCard : UserControl
         Loaded += (_, _) => { if (model != null) { model.PropertyChanged -= ModelChanged; model.PropertyChanged += ModelChanged; } Refresh(); };
         AddHandler(Selector.SelectedEvent, new RoutedEventHandler((_, _) => Selection(true)));
         AddHandler(Selector.UnselectedEvent, new RoutedEventHandler((_, _) => Selection(false)));
-        MouseEnter += (_, _) => { if (model != null) { var c = Theme.Paper(model.Note.Color).Color; Motion.Color(paper, Color.FromRgb((byte)(c.R * .86 + 255 * .14), (byte)(c.G * .86 + 255 * .14), (byte)(c.B * .86 + 255 * .14))); } };
-        MouseLeave += (_, _) => { pressed = false; if (model != null) Motion.Color(paper, Theme.Paper(model.Note.Color).Color); };
+        MouseEnter += (_, _) => { hovered = true; if (model != null) Motion.Color(paper, Hover(Theme.Paper(model.Note.Color).Color)); };
+        MouseLeave += (_, _) => { pressed = false; hovered = false; if (model != null) Motion.Color(paper, Theme.Paper(model.Note.Color).Color); };
         PreviewMouseLeftButtonDown += (_, _) => { if (model?.Removing != false) return; pressed = true; var item = Ancestor<ListBoxItem>(this); if (item != null) { item.IsSelected = true; item.Focus(); } };
         MouseLeftButtonUp += (_, e) => { bool open = pressed && IsMouseOver && model?.Removing == false; pressed = false; if (open) AppController.Current.Open(model!.Id); e.Handled = true; };
         ContextMenuOpening += (_, _) => { if (model != null) ContextMenu = AppController.Current.NoteMenu(model.Id); };
@@ -113,12 +125,32 @@ public sealed class NoteCard : UserControl
     void Refresh()
     {
         if (model == null) return;
-        title.Text = model.Title; preview.Text = model.Preview; hint.Text = model.Hint; hint.ToolTip = model.Hint;
-        stripe.Background = Theme.Accent(model.Note.Color); Motion.Color(paper, Theme.Paper(model.Note.Color).Color);
+        var query = AppController.Current == null ? "" : AppController.Current.Model.Query.Trim();
+        Mark(title, model.Title, query); Mark(preview, model.Preview, query); hint.Text = model.Hint; hint.ToolTip = model.Hint;
+        stripe.Background = Theme.Accent(model.Note.Color);
+        var color = Theme.Paper(model.Note.Color).Color; Motion.Color(paper, hovered ? Hover(color) : color);
         AutomationProperties.SetName(this, model.Title + "，" + model.Hint);
         IsHitTestVisible = !model.Removing;
-        if (model.Removing) Motion.Fade(this, Opacity, 0, 140); else Motion.Set(this, OpacityProperty, 1d);
+        if (Removing != model.Removing) { Removing = model.Removing; Ancestor<ResponsiveNotesPanel>(this)?.InvalidateMeasure(); }
+        if (model.Removing) Motion.Fade(this, Opacity, 0, 140); else if (wasRemoving) Motion.Set(this, OpacityProperty, 1d);
+        wasRemoving = model.Removing;
         var parent = Ancestor<ListBoxItem>(this); if (parent != null) Selection(parent.IsSelected);
+    }
+    static Color Hover(Color c) => Color.FromRgb((byte)(c.R * .86 + 255 * .14), (byte)(c.G * .86 + 255 * .14), (byte)(c.B * .86 + 255 * .14));
+    internal static void Mark(TextBlock block, string value, string query)
+    {
+        block.Inlines.Clear();
+        if (query.Length == 0) { block.Text = value; return; }
+        var matches = SearchMatches.Find(value, query);
+        if (matches.Count == 0) { block.Text = value; return; }
+        int start = 0;
+        foreach (var match in matches)
+        {
+            if (match.Start > start) block.Inlines.Add(new Run(value[start..match.Start]));
+            block.Inlines.Add(new Run(value.Substring(match.Start, match.Length)) { Background = Theme.Brush("#E8B931") });
+            start = match.Start + match.Length;
+        }
+        if (start < value.Length) block.Inlines.Add(new Run(value[start..]));
     }
     public static T? Ancestor<T>(DependencyObject node) where T : DependencyObject
     {
@@ -139,6 +171,8 @@ public sealed class MainWindow : ChromeWindow
     public TextBox Search { get; } = new() { Height = 28, FontSize = 13, Padding = new Thickness(8, 4, 8, 4), BorderBrush = Theme.Brush("#DDDED5"), Background = Brushes.White };
     public TextBlock Status { get; } = Theme.Text("", 11);
     readonly TextBlock section = Theme.Text("", 11), empty = Theme.Text("", 13);
+    readonly Button firstNote = new() { Content = "写第一条", Margin = new Thickness(0, 12, 0, 0), HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed };
+    readonly StackPanel emptyPanel = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     readonly Button sync, notices;
     readonly Border dot = new() { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 0, 8, 0) };
     readonly RotateTransform rotation = new();
@@ -173,7 +207,8 @@ public sealed class MainWindow : ChromeWindow
                 if (Notes.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem item)
                     NoteCard.Descendant<NoteCard>(item)?.UpdateSelection(item.IsSelected);
         };
-        empty.TextAlignment = TextAlignment.Center; empty.HorizontalAlignment = HorizontalAlignment.Center; empty.VerticalAlignment = VerticalAlignment.Center; empty.IsHitTestVisible = false; Grid.SetRow(empty, 2); grid.Children.Add(empty);
+        empty.TextAlignment = TextAlignment.Center; empty.HorizontalAlignment = HorizontalAlignment.Center;
+        firstNote.Click += (_, _) => AppController.Current.NewNote(); emptyPanel.Children.Add(empty); emptyPanel.Children.Add(firstNote); Grid.SetRow(emptyPanel, 2); grid.Children.Add(emptyPanel);
         sync = Theme.Icon("\uE895", "立即同步（Ctrl+R）", () => _ = AppController.Current.SyncNow()); sync.RenderTransform = rotation; sync.RenderTransformOrigin = new Point(.5, .5);
         notices = Theme.Icon("\uE7BA", "查看冲突提醒", () => AppController.Current.OpenNotice());
         var footer = new Grid { VerticalAlignment = VerticalAlignment.Bottom };
@@ -198,7 +233,10 @@ public sealed class MainWindow : ChromeWindow
     }
     public void Refresh(LocalState state, SyncService syncService, bool saved, string? saveError)
     {
-        section.Text = Model.Section; empty.Text = Model.Empty; empty.Visibility = Model.Items.Any(i => !i.Removing) ? Visibility.Collapsed : Visibility.Visible;
+        section.Text = Model.Section; empty.Text = Model.Empty;
+        bool vacant = !Model.Items.Any(i => !i.Removing);
+        emptyPanel.Visibility = vacant ? Visibility.Visible : Visibility.Collapsed;
+        firstNote.Visibility = vacant && Model.Query.Trim().Length == 0 && !Model.PinnedOnly ? Visibility.Visible : Visibility.Collapsed;
         allFilter.Background = Model.PinnedOnly ? Brushes.White : new SolidColorBrush(Theme.Ink); allFilter.Foreground = Model.PinnedOnly ? new SolidColorBrush(Theme.Ink) : Brushes.White;
         pinnedFilter.Background = Model.PinnedOnly ? new SolidColorBrush(Theme.Ink) : Brushes.White; pinnedFilter.Foreground = Model.PinnedOnly ? Brushes.White : new SolidColorBrush(Theme.Ink);
         Status.Text = Model.Status; Status.ToolTip = saveError ?? Model.Status;
