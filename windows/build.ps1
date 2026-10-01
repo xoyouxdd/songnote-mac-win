@@ -1,4 +1,4 @@
-param([switch]$Test, [switch]$CheckUi, [switch]$Integration)
+param([switch]$Test, [switch]$CheckUi, [switch]$Integration, [string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $taskRoot=Split-Path $PSScriptRoot -Parent
 $taskDotnet=Join-Path $taskRoot 'build\dotnet\dotnet.exe'
@@ -10,15 +10,21 @@ $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH='false'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'
 Push-Location $PSScriptRoot
 try {
-    & $taskDotnet build 'src\SongNote.Windows\SongNote.Windows.csproj' -c Release
+    $taskBuildArgs=@('build','src\SongNote.Windows\SongNote.Windows.csproj','-c','Release')
+    if ($OutputDirectory) {
+        $taskOutput=[System.IO.Path]::GetFullPath($OutputDirectory)
+        if (-not $taskOutput.StartsWith($taskRoot+[System.IO.Path]::DirectorySeparatorChar,[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Build output must remain inside the project' }
+        $taskBuildArgs+=@('-o',$taskOutput)
+    }
+    & $taskDotnet @taskBuildArgs
     if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
     if ($Test) {
         & $taskDotnet run --project 'tests\SongNote.Core.Tests\SongNote.Core.Tests.csproj' -c Release
         if ($LASTEXITCODE -ne 0) { throw 'Core tests failed' }
     }
     if ($CheckUi) {
-        $taskExe=Join-Path $PSScriptRoot 'src\SongNote.Windows\bin\Release\net10.0-windows\SongNote.exe'
-        $taskUi=Join-Path $taskRoot 'build\windows-ui-check'
+        $taskExe=if($OutputDirectory){Join-Path $taskOutput 'SongNote.exe'}else{Join-Path $PSScriptRoot 'src\SongNote.Windows\bin\Release\net10.0-windows\SongNote.exe'}
+        $taskUi=if($OutputDirectory){Join-Path $taskOutput 'ui-check'}else{Join-Path $taskRoot 'build\windows-ui-check'}
         $taskProcess=Start-Process -FilePath $taskExe -ArgumentList @('--check-ui','--output',"`"$taskUi`"") -WindowStyle Hidden -Wait -PassThru
         if ($taskProcess.ExitCode -ne 0) { throw 'Native WPF UI check failed' }
         Get-Content (Join-Path $taskUi 'result.txt')

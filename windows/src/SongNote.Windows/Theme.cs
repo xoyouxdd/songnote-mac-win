@@ -17,6 +17,8 @@ public static class Theme
     public static SolidColorBrush Muted => Brush("#596159");
     public static void Install(Application app)
     {
+        app.Resources.MergedDictionaries.Add(new ResourceDictionary
+        { Source = new Uri("pack://application:,,,/Styles/ScrollBars.xaml") });
         var button = new Style(typeof(Button));
         button.Setters.Add(new Setter(Control.FontSizeProperty, 12d));
         button.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Ink)));
