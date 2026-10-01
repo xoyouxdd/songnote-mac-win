@@ -200,12 +200,21 @@ final class NoteCardView: NSView {
         title.font = .systemFont(ofSize: 15, weight: .semibold); title.textColor = Theme.ink
         preview.font = .systemFont(ofSize: 13); preview.textColor = Theme.muted
         hint.font = .systemFont(ofSize: 11); hint.textColor = Theme.muted
-        for label in [title, preview, hint] { label.lineBreakMode = .byTruncatingTail }
+        for label in [title, preview, hint] {
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.cell?.usesSingleLineMode = true
+            label.cell?.wraps = false
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
         for view in [stripe, title, preview, hint] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
             stripe.leadingAnchor.constraint(equalTo: leadingAnchor), stripe.widthAnchor.constraint(equalToConstant: 4), stripe.topAnchor.constraint(equalTo: topAnchor), stripe.bottomAnchor.constraint(equalTo: bottomAnchor),
             title.topAnchor.constraint(equalTo: topAnchor, constant: 9), title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14), title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            title.heightAnchor.constraint(equalToConstant: 20),
             preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3), preview.leadingAnchor.constraint(equalTo: title.leadingAnchor), preview.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            preview.heightAnchor.constraint(equalToConstant: 18),
+            hint.heightAnchor.constraint(equalToConstant: 16),
             hint.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8), hint.leadingAnchor.constraint(equalTo: title.leadingAnchor), hint.trailingAnchor.constraint(equalTo: title.trailingAnchor)])
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityHelp("打开便签；方向键移动，回车打开，右键管理")
     }
@@ -215,11 +224,15 @@ final class NoteCardView: NSView {
         Theme.background(layer, color: hovered ? paper.blended(withFraction: 0.14, of: .white)! : paper)
         stripe.layer?.backgroundColor = accent.cgColor; updateBorder()
         title.stringValue = String(note.title.prefix(90))
-        preview.stringValue = String(note.text.split(separator: "\n").dropFirst().joined(separator: " ").prefix(130))
+        preview.stringValue = String(note.preview.prefix(130))
         hint.stringValue = (deleteConflict ? "删除未执行 · " : "") + (note.conflict_of != nil ? "冲突副本 · " : (note.pinned ? "置顶 · " : "")) + Theme.timestamp(note.updated_at) + (pending ? " · 待同步" : "")
-        hint.toolTip = hint.stringValue; setAccessibilityLabel(note.title + "，" + hint.stringValue)
+        hint.toolTip = hint.stringValue; setAccessibilityLabel(String(note.title.prefix(90)) + "，" + hint.stringValue)
     }
-    func updateBorder() { layer?.borderWidth = selected ? 2 : 1; layer?.borderColor = (selected ? Theme.ink : accent.withAlphaComponent(hovered ? 0.6 : 0.25)).cgColor }
+    func updateBorder() {
+        layer?.borderWidth = selected ? 1.5 : 1
+        let selectedColor = accent.blended(withFraction: 0.5, of: Theme.ink) ?? Theme.ink
+        layer?.borderColor = (selected ? selectedColor : accent.withAlphaComponent(hovered ? 0.6 : 0.25)).cgColor
+    }
     override func becomeFirstResponder() -> Bool { onSelect?(); return true }
     override func mouseDown(with event: NSEvent) { guard interactive else { return }; pressed = true; window?.makeFirstResponder(self) }
     override func mouseUp(with event: NSEvent) {
