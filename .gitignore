@@ -1,0 +1,8 @@
+private/
+build/
+.DS_Store
+server/data/
+*.sqlite*
+server/config.json
+windows/client-config.json
+macos/client-config.json

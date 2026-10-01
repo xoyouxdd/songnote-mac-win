@@ -1,0 +1,6 @@
+{
+  "host": "127.0.0.1",
+  "port": 18084,
+  "database": "C:\\便签\\data\\notes.sqlite",
+  "token": "REPLACE_WITH_PRIVATE_SYNC_TOKEN"
+}

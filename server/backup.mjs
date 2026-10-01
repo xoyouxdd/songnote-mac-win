@@ -1,0 +1,15 @@
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = dirname(fileURLToPath(import.meta.url));
+const config = JSON.parse(readFileSync(join(root, 'config.json'), 'utf8'));
+const directory = join(dirname(config.database), 'backups');
+mkdirSync(directory, { recursive: true });
+const name = new Date().toISOString().replace(/[:.]/g, '-') + '.sqlite';
+const db = new DatabaseSync(config.database);
+db.exec('PRAGMA busy_timeout=10000');
+db.prepare('VACUUM INTO ?').run(join(directory, name));
+db.close();
+for (const old of readdirSync(directory).filter(f => f.endsWith('.sqlite')).sort().reverse().slice(48)) unlinkSync(join(directory, old));
+console.log('BACKUP_OK', name);
