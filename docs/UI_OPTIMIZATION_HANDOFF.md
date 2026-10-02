@@ -13,7 +13,7 @@
 
 ## 文件入口
 
-Windows 1.2.1 的 `AttachmentPicker.cs` 负责单个选择器状态，`AttachmentBrowser.cs` 使用 WPF 列出文件系统条目，后台枚举，不加载系统 Shell 文件对话框；`AttachmentPickerChecks.cs` 验证等待心跳、取消/重开、异常恢复、关闭目标后的回调及目录读取取消。实际虚构文件选择/另存已通过。
+Windows 1.2.1 的 `AttachmentPicker.cs` 负责单个选择器状态，`AttachmentBrowser.cs` 使用 WPF 列出文件系统条目，后台枚举，不加载系统 Shell 文件对话框；`AttachmentPickerChecks.cs` 验证等待心跳、取消/重开、异常恢复、关闭目标后的回调及目录读取取消。实际虚构文件选择、取消重开与另存已通过。1.2.1 已推送 GitHub，Windows 两个入口和服务端版本标识已更新；数据/配置、回执及备份核验见 Windows 验证记录。
 
 `macos/App.swift`：窗口、折叠附件及交互；`Theme.swift`：卡片/样式/动效；`Models.swift`：附件、冻结载荷、合并和输入法基准；`Store.swift`：原子保存、后台上传和同步；`AttachmentFiles.swift`：私有文件缓存与传输；`LayoutChecks.swift`：虚构内容原生几何检查。构建脚本已包含新增文件和 CryptoKit，最低 macOS 13。
 
