@@ -14,7 +14,7 @@ static class Tests
     static SyncResponse Response(Change sent, int revision, string? text = null, string status = "applied", string? target = null)
     {
         string id = target ?? sent.NoteId;
-        var note = new Note(id, text ?? sent.Text, sent.Color, sent.Pinned, revision, DateTimeOffset.UtcNow.ToString("O"), sent.Deleted && status != "delete_conflict", status == "conflict_copy" ? sent.NoteId : null);
+        var note = new Note(id, text ?? sent.Text, sent.Color, sent.Pinned, revision, DateTimeOffset.UtcNow.ToString("O"), sent.Deleted && status != "delete_conflict", status == "conflict_copy" ? sent.NoteId : null, sent.Attachments);
         return new(1, revision, [note], [new(sent.OpId, id, revision, status)]);
     }
     public static async Task<int> Main(string[] args)
@@ -189,6 +189,62 @@ static class Tests
                 }
                 finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
             });
+            Test("attachment-only notes persist, frozen metadata and later removal survive conflict remap", () =>
+            {
+                var store = New(out var file); var note = store.CreateDraft();
+                var a = new Attachment(Guid.NewGuid().ToString(), "虚构文件.txt", 0, new string('a', 64));
+                Check(!ProtocolJson.Encode(Change.From(note)).Contains("attachments"));
+                store.AddAttachment(note.Id, a); store.DiscardDraft(note.Id);
+                Check(store.Snapshot().Notes.ContainsKey(note.Id) && !store.Snapshot().DraftIds.Contains(note.Id));
+                var sent = store.Freeze().Changes; store.RemoveAttachment(note.Id, a.Id);
+                Check(sent[0].Attachments!.Single() == a && store.Snapshot().Pending[note.Id].Attachments!.Length == 0);
+                var copy = Guid.NewGuid().ToString(); store.Apply(Response(sent[0], 4, status: "conflict_copy", target: copy), sent);
+                Check(store.Snapshot().Pending[copy].Attachments!.Length == 0 && store.Snapshot().Notes[copy].Attachments!.Length == 0);
+                var restart = new LocalStore(file); Check(restart.Snapshot().Pending[copy].BaseRevision == 4);
+                var basis = restart.Snapshot().Notes[copy]; restart.AddAttachment(copy, a);
+                restart.SetText(copy, "正式选字", basis with { Attachments = restart.Snapshot().Notes[copy].Attachments });
+                Check(restart.Snapshot().Notes[copy].Attachments!.Single() == a);
+                Throws<InvalidDataException>(() => restart.AddAttachment(copy, a with { Name = "../unsafe" }));
+            });
+            await Test("imported attachment survives source removal; corrupt download never replaces destination", async () =>
+            {
+                var directory = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+                try
+                {
+                    using var client = new HttpClient(new BadFile());
+                    var files = new AttachmentFiles(directory, new("https://example.invalid", new string('x', 32)), client);
+                    string source = Path.Combine(directory, "fixture.bin"), destination = Path.Combine(directory, "saved.bin");
+                    byte[] bytes = [0, 1, 2, 255, 128]; await File.WriteAllBytesAsync(source, bytes);
+                    var a = await files.Import(source);
+                    using (var inFlight = new FileStream(Path.Combine(directory, "attachments", a.Sha256), FileMode.Open, FileAccess.Read, FileShare.Read))
+                    { var repeated = await files.Import(source); Check(repeated.Sha256 == a.Sha256 && repeated.Id != a.Id); }
+                    File.Delete(source); await files.Download(a, destination);
+                    Check((await File.ReadAllBytesAsync(destination)).SequenceEqual(bytes));
+                    var damaged = a with { Sha256 = new string('b', 64) }; bool rejected = false;
+                    try { await files.Download(damaged, destination); } catch (IOException) { rejected = true; }
+                    Check(rejected && (await File.ReadAllBytesAsync(destination)).SequenceEqual(bytes));
+                    Check(!File.Exists(Path.Combine(directory, "attachments", damaged.Sha256)));
+                    Check(!Directory.GetFiles(Path.Combine(directory, "attachments"), "*.tmp").Any());
+                }
+                finally { Directory.Delete(directory, true); }
+            });
+            await Test("unsupported health bodies and cache permission failures keep attachments pending with an error", async () =>
+            {
+                foreach (var body in new[] { "[]", "null", "1", "{}", "{\"features\":[1]}" })
+                {
+                    using var client = new HttpClient(new FixedBody(body));
+                    var files = new AttachmentFiles(AppContext.BaseDirectory, new("https://example.invalid", new string('x', 32)), client);
+                    bool refused = false; try { await files.CheckSupport(default); } catch (IOException) { refused = true; }
+                    Check(refused, "Unsupported health response was accepted");
+                }
+                var store = New(out _); var note = store.CreateDraft();
+                store.AddAttachment(note.Id, new(Guid.NewGuid().ToString(), "fixture.txt", 1, new string('a', 64)));
+                using var sync = new SyncService(store, new("https://example.invalid", new string('x', 32)), new HttpClient(new DeniedFile()), attachmentDirectory: AppContext.BaseDirectory);
+                await sync.Sync(true);
+                for (int i = 0; i < 20 && sync.UploadingAttachments; i++) await Task.Delay(10);
+                Check(!sync.UploadingAttachments && sync.AttachmentStatus?.Contains("Injected permission") == true);
+                Check(store.Snapshot().Pending.ContainsKey(note.Id) && store.Snapshot().FrozenBatch.Length == 0);
+            });
             await Test("accepted response lost, continued editing, restart replays exact op before later edit", async () =>
             {
                 var store = New(out var file); var note = store.CreateDraft(); store.SetText(note.Id, "A"); var server = new FakeServer { LoseFirst = true };
@@ -217,6 +273,7 @@ static class Tests
             }
             var endpoint = args.SkipWhile(a => a != "--integration").Skip(1).FirstOrDefault();
             if (endpoint != null)
+            {
                 await Test("real Node protocol integration: C# create/update, remote conflict and stale deletion", async () =>
                 {
                     var uri = new Uri(endpoint); Check(uri.IsLoopback && uri.Scheme == "http", "Integration must be loopback HTTP");
@@ -230,6 +287,31 @@ static class Tests
                     store.SetText(note.Id, old.Text, old); store.Delete(note.Id); await sync.Sync(true); Check(store.Snapshot().DeleteConflictIds.Contains(note.Id));
                     Check(store.Snapshot().Notes[note.Id].Text == "Mac 模拟新内容" && !store.Snapshot().Notes[note.Id].Deleted);
                 });
+                await Test("real Node file integration: upload leaves text syncing and another device downloads", async () =>
+                {
+                    var directory = Path.Combine(AppContext.BaseDirectory, "test-data", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
+                    try
+                    {
+                        var store = New(out _); using var sync = new SyncService(store, new(endpoint, new string('t', 64)), allowLoopbackHttp: true, attachmentDirectory: directory);
+                        var source = Path.Combine(directory, "fixture.bin"); var bytes = Encoding.UTF8.GetBytes("虚构跨端附件\0中文 📝"); await File.WriteAllBytesAsync(source, bytes);
+                        var a = await sync.Files!.Import(source); var note = store.CreateDraft(); store.AddAttachment(note.Id, a);
+                        var plain = store.CreateDraft(); store.SetText(plain.Id, "附件上传同时同步文字");
+                        await sync.Sync(true);
+                        Check(!store.Snapshot().Pending.ContainsKey(plain.Id), sync.Error ?? "Plain text was blocked by upload");
+                        for (int i = 0; i < 60 && (store.Snapshot().Pending.Count != 0 || store.Snapshot().FrozenBatch.Length != 0); i++)
+                        { await Task.Delay(100); await sync.Sync(); }
+                        Check(store.Snapshot().Notes[note.Id].Revision > 0 && store.Snapshot().Pending.Count == 0, sync.AttachmentStatus ?? sync.Error ?? "Attachment did not sync");
+                        var other = Path.Combine(directory, "other-device"); using var client = new HttpClient();
+                        var receiver = new AttachmentFiles(other, new(endpoint, new string('t', 64)), client);
+                        var saved = Path.Combine(directory, "received.bin"); await receiver.Download(a, saved); Check((await File.ReadAllBytesAsync(saved)).SequenceEqual(bytes));
+                        // The server HEAD makes a repeated upload idempotent without a local source cache.
+                        await receiver.Upload(a, default);
+                        store.RemoveAttachment(note.Id, a.Id); await sync.Sync(true);
+                        Check(store.Snapshot().Notes[note.Id].Attachments!.Length == 0 && store.Snapshot().Pending.Count == 0);
+                    }
+                    finally { Directory.Delete(directory, true); }
+                });
+            }
             Console.WriteLine($"CORE_TESTS_OK: {passed} tests"); return 0;
         }
         catch (Exception e) { Console.Error.WriteLine(e); return 1; }
@@ -249,6 +331,21 @@ sealed class FixedBody : HttpMessageHandler
     public FixedBody(string body) => this.body = body;
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation) =>
         Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+}
+sealed class BadFile : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation) =>
+        Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[5]) });
+}
+sealed class DeniedFile : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellation)
+    {
+        if (request.RequestUri!.AbsolutePath == "/health")
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"features\":[\"attachments\"]}") });
+        if (request.Method == HttpMethod.Head) throw new UnauthorizedAccessException("Injected permission failure");
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(ProtocolJson.Encode(new SyncResponse(1, 0, [], []))) });
+    }
 }
 sealed class FakeServer : HttpMessageHandler
 {

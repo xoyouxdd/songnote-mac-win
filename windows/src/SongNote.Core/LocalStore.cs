@@ -38,6 +38,7 @@ public sealed class LocalStore
     LocalState state;
     public bool LastSaved { get; private set; } = true;
     public string? SaveError { get; private set; }
+    public string? DirectoryPath => (file as AtomicStateFile)?.DirectoryPath;
     public event Action? Changed;
     public event Action<Dictionary<string, string>, Receipt[], Change[]>? Accepted;
     public LocalStore(IStateFile file)
@@ -55,6 +56,8 @@ public sealed class LocalStore
             state.Pending.Any(p => p.Value == null || p.Key != p.Value.NoteId || !state.Notes.ContainsKey(p.Key)) ||
             state.Notes.Any(p => p.Value == null || p.Key != p.Value.Id || p.Value.Text == null || p.Value.Text.Length > 100000))
             throw new InvalidDataException("本机便签文件无效，原文件已保留。");
+        foreach (var n in state.Notes.Values) Attachment.ValidateList(n.Attachments);
+        foreach (var c in state.Pending.Values.Concat(state.FrozenBatch)) Attachment.ValidateList(c.Attachments);
     }
     public LocalState Snapshot() { lock (gate) return state.Copy(); }
     bool Save(LocalState value)
@@ -82,7 +85,7 @@ public sealed class LocalStore
         bool result = true;
         lock (gate)
         {
-            if (state.DraftIds.Contains(id) && state.Notes.TryGetValue(id, out var note) && note.Text.Length == 0)
+            if (state.DraftIds.Contains(id) && state.Notes.TryGetValue(id, out var note) && note.Text.Length == 0 && (note.Attachments?.Length ?? 0) == 0)
             {
                 var candidate = state.Copy(); candidate.Notes.Remove(id); candidate.DraftIds.Remove(id); candidate.OpenNotes.Remove(id);
                 result = Save(candidate); if (result) state = candidate;
@@ -97,7 +100,7 @@ public sealed class LocalStore
         {
             var candidate = state.Copy(); var open = openIds.ToArray();
             foreach (var id in open)
-                if (candidate.DraftIds.Contains(id) && candidate.Notes.TryGetValue(id, out var note) && note.Text.Length == 0)
+                if (candidate.DraftIds.Contains(id) && candidate.Notes.TryGetValue(id, out var note) && note.Text.Length == 0 && (note.Attachments?.Length ?? 0) == 0)
                 { candidate.Notes.Remove(id); candidate.DraftIds.Remove(id); }
             candidate.OpenNotes = new(open.Where(candidate.Notes.ContainsKey));
             result = Save(candidate); if (result) state = candidate;
@@ -120,6 +123,18 @@ public sealed class LocalStore
         if (s.Notes.TryGetValue(id, out var note) && !note.Deleted && note.Color != color) Queue(s, note with { Color = color });
     });
     public void TogglePin(string id) => Edit(s => { if (s.Notes.TryGetValue(id, out var note) && !note.Deleted) Queue(s, note with { Pinned = !note.Pinned }); });
+    public void AddAttachment(string id, Attachment attachment) => Edit(s =>
+    {
+        attachment.Validate();
+        if (!s.Notes.TryGetValue(id, out var note) || note.Deleted) throw new InvalidDataException("便签已删除。");
+        Attachment[] values = [.. note.Attachments ?? [], attachment]; Attachment.ValidateList(values);
+        Queue(s, note with { Attachments = values });
+    });
+    public void RemoveAttachment(string id, string attachmentId) => Edit(s =>
+    {
+        if (s.Notes.TryGetValue(id, out var note) && !note.Deleted)
+            Queue(s, note with { Attachments = (note.Attachments ?? []).Where(a => a.Id != attachmentId).ToArray() });
+    });
     public void Delete(string id) => Edit(s => { if (s.Notes.TryGetValue(id, out var note) && !note.Deleted) Queue(s, note with { Deleted = true }); });
     static void Queue(LocalState s, Note note)
     {
@@ -130,7 +145,7 @@ public sealed class LocalStore
     public void SavePlacement(string id, Placement placement) => Edit(s => s.Windows[id] = placement);
     public void SaveOpenNotes(IEnumerable<string> ids) => Edit(s => s.OpenNotes = new(ids));
     public void MarkTrayHint() => Edit(s => s.TrayHintShown = true);
-    public SyncRequest Freeze()
+    public SyncRequest Freeze(Func<Change, bool>? ready = null)
     {
         SyncRequest request;
         lock (gate)
@@ -139,13 +154,13 @@ public sealed class LocalStore
             if (state.FrozenBatch.Length == 0 && state.Pending.Count > 0)
             {
                 var candidate = state.Copy(); var batch = new List<Change>();
-                foreach (var op in state.Pending.Values.OrderBy(c => c.NoteId).Take(4))
+                foreach (var op in state.Pending.Values.Where(c => ready?.Invoke(c) ?? true).OrderBy(c => c.NoteId).Take(4))
                 {
                     var proposal = batch.Append(op).ToArray();
                     if (System.Text.Encoding.UTF8.GetByteCount(ProtocolJson.Encode(new SyncRequest(state.DeviceId, proposal))) > 2 * 1024 * 1024) break;
                     batch.Add(op);
                 }
-                if (batch.Count == 0) throw new InvalidDataException("单条操作超过请求大小限制，内容已保留。");
+                if (batch.Count == 0 && state.Pending.Values.Any(c => ready?.Invoke(c) ?? true)) throw new InvalidDataException("单条操作超过请求大小限制，内容已保留。");
                 candidate.FrozenBatch = batch.ToArray();
                 foreach (var op in candidate.FrozenBatch) candidate.Pending.Remove(op.NoteId);
                 if (!Save(candidate)) throw new IOException(SaveError);

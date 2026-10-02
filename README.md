@@ -18,7 +18,7 @@ Mac 编译：`scripts/build-mac.sh`。需要 macOS Command Line Tools；输出�
 
 Mac 数据目录：`~/Library/Application Support/SongNote`。每次正式输入写入本机，服务每 3 秒同步；中文候选文字暂不保存。未编辑空草稿只留本机，关窗丢弃。标题栏提供新建、列表、列表置顶、更多；更多包含六色选择、总在最前和删除。底部一行状态及立即同步，冲突和拒绝删除在正文上方持续提示。⌘F 搜索，列表支持键盘和右键操作；宽窗口自动双列。关闭窗口后仍在菜单栏运行，菜单可直接打开置顶便签或切换开机启动；Command-Q 退出。
 
-Mac UI 源码已在 Windows 更新，Mac 编译/原生布局/真机体验尚待验证，见 [续作与验收](docs/UI_OPTIMIZATION_HANDOFF.md)。旧截图不作为本轮证据。Windows 首版及 Grok 优化修复已实现，构建、25 项核心测试、Node 回环协议及 40 项 WPF 检查通过（含第二轮界面打磨）；运行方式和未验收项见 [Windows 验证记录](windows/VALIDATION.md)。
+当前版本由根目录 `VERSION` 统一定义为 1.2.0。Windows 构建和本机验证通过，见 [Windows 验证记录](windows/VALIDATION.md)；Mac 源码和构建脚本已同步，原生编译、布局与实机体验待验证，见 [续作与验收](docs/UI_OPTIMIZATION_HANDOFF.md)。
 
 验证：
 
@@ -32,3 +32,7 @@ build/SongNote.app/Contents/MacOS/SongNote --check-layout
 ```
 
 真实服务器凭据与同步密钥不进入代码仓库。实际 Mac/Windows 双端互通仍待实机联调，本机回环测试不视为生产验收。
+
+1.2.0（2026-10-03）实现两端便签附件：在更多菜单选择「添加附件…」，正文下方默认折叠显示数量，展开后下载或移除；每文件最多 20 MiB，每便签最多 20 个。文件先保存本机，后台上传成功后同步描述，下载校验长度和 SHA-256。服务端文件同库保存，已纳入原有数据库备份，详见[附件协议](docs/SYNC_PROTOCOL.md)。
+
+本轮 Windows Release 构建 0 警告/错误、28 项核心测试、44 项 WPF 检查、2 项 Node 回环集成及 8 项服务端测试通过；Swift 语法检查通过。Mac 新增原生模型/布局测试尚未在 macOS 编译执行，真实双端互传及生产反代大小/超时仍待验证。服务端尚未部署，旧服务端会提示附件保存在本机待传；当前已安装 Windows 程序未替换。本机测试程序位于 `build/attachments-windows/SongNote.exe`。

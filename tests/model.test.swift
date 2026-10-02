@@ -126,6 +126,30 @@ import Foundation
             _ = polled.merge(SyncResponse(protocol: 1, sequence: 10, notes: [current], results: []), sent: [])
             assert(polled.deleteConflictIDs?.contains(original.id) == true)
         }
-        print("MODEL_TESTS_OK: in-flight edits, conflict metadata, legacy decoding, local drafts, stale delete rejection and persistent notices")
+        let attachment = Attachment(id: UUID().uuidString, name: "虚构文件.txt", size: 0, sha256: String(repeating: "a", count: 64))
+        assert(attachment.valid)
+        assert(!Attachment.validList([attachment, attachment]))
+        var unsafe = attachment; unsafe.name = "../file"; assert(!unsafe.valid)
+        var filesState = LocalState(); var fileOnly = filesState.createDraft()
+        fileOnly.attachments = [attachment]; filesState.notes[fileOnly.id] = fileOnly
+        assert(!filesState.discardDraft(fileOnly.id))
+        filesState.draftIDs?.remove(fileOnly.id); filesState.pending[fileOnly.id] = Change(fileOnly)
+        filesState.frozen = [filesState.pending[fileOnly.id]!]
+        let restartedFiles = try! JSONDecoder().decode(LocalState.self, from: JSONEncoder().encode(filesState))
+        assert(restartedFiles.frozen?.first?.attachments == [attachment])
+        var attachmentComposition = NoteComposition(fileOnly)
+        attachmentComposition.update(attachments: [])
+        assert(attachmentComposition.note.attachments == [])
+        var newEdit = fileOnly; newEdit.text = "上传期间继续编辑"; newEdit.attachments = []
+        filesState.notes[fileOnly.id] = newEdit; filesState.pending[fileOnly.id] = Change(newEdit)
+        var fileCopy = fileOnly; fileCopy.id = UUID().uuidString; fileCopy.revision = 4; fileCopy.conflict_of = fileOnly.id
+        let sentFile = filesState.frozen![0]
+        let fileResponse = SyncResponse(protocol: 1, sequence: 4, notes: [fileCopy], results: [Receipt(op_id: sentFile.op_id, note_id: fileCopy.id, revision: 4, status: "conflict_copy")])
+        assert(LocalState.validResponse(fileResponse, sent: [sentFile]))
+        _ = filesState.merge(fileResponse, sent: [sentFile])
+        assert(filesState.pending[fileCopy.id]?.attachments == [] && filesState.pending[fileCopy.id]?.base_revision == 4)
+        assert(filesState.notes[fileCopy.id]?.text == "上传期间继续编辑")
+        assert(restartedFiles.frozen?.first?.attachments == [attachment])
+        print("MODEL_TESTS_OK: in-flight edits, conflicts, legacy decoding, drafts, delete notices, attachments, frozen metadata and composition overrides")
     }
 }

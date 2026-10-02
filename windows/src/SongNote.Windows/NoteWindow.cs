@@ -27,14 +27,19 @@ public sealed class NoteWindow : ChromeWindow
     bool lastPinned;
     public bool Editing => IsActive && Editor.IsKeyboardFocusWithin;
     public Button PinButton => pin;
+    public Expander AttachmentPanel { get; } = new() { Margin = new Thickness(12, 0, 12, 4), Visibility = Visibility.Collapsed };
+    readonly StackPanel attachmentRows = new();
+    readonly TextBlock attachmentMessage = Theme.Text("", 11);
+    string attachmentSignature = "";
+    string localAttachmentMessage = "";
     public NoteWindow(AppController controller, Note note) : base(maximizable: false)
     {
         this.controller = controller; Id = note.Id; Width = 380; Height = 420; MinWidth = 280; MinHeight = 240;
         Tools.Children.Add(Theme.Icon("\uE710", "新建便签（Ctrl+N）", controller.NewNote));
         Tools.Children.Add(Theme.Icon("\uE8FD", "便签列表（Ctrl+L）", () => controller.ShowList()));
         pin = Theme.Icon("\uE718", "列表置顶", () => controller.Pin(Id)); Tools.Children.Add(pin);
-        more = Theme.Icon("\uE712", "更多：颜色、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
-        var grid = new Grid(); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        more = Theme.Icon("\uE712", "更多：附件、颜色、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
+        var grid = new Grid(); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         noticeText.TextWrapping = TextWrapping.Wrap; noticeText.Foreground = new SolidColorBrush(Theme.Ink); noticeAction.Style = Theme.Style("SoftButton");
         noticeIcon.Margin = new Thickness(0, 1, 8, 0); noticeIcon.VerticalAlignment = VerticalAlignment.Top;
         var notice = new DockPanel(); DockPanel.SetDock(noticeIcon, Dock.Left); DockPanel.SetDock(noticeAction, Dock.Right);
@@ -43,8 +48,10 @@ public sealed class NoteWindow : ChromeWindow
         // A calmer writing surface: about 1.55x line height for 16px Chinese text.
         TextBlock.SetLineHeight(Editor, 25); TextBlock.SetLineStackingStrategy(Editor, LineStackingStrategy.BlockLineHeight);
         Grid.SetRow(Editor, 1); grid.Children.Add(Editor);
+        AttachmentPanel.Content = new ScrollViewer { Content = attachmentRows, MaxHeight = 90, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        Grid.SetRow(AttachmentPanel, 2); grid.Children.Add(AttachmentPanel);
         sync = Theme.Icon("\uE895", "立即同步（Ctrl+R）；本机保存失败时先重试", () => _ = controller.SyncNow()); sync.RenderTransform = spin; sync.RenderTransformOrigin = new Point(.5, .5);
-        var footer = new Grid { Margin = new Thickness(12, 4, 10, 8) }; footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Children.Add(Footer); Grid.SetColumn(sync, 1); footer.Children.Add(sync); Grid.SetRow(footer, 2); grid.Children.Add(footer); Body.Content = grid;
+        var footer = new Grid { Margin = new Thickness(12, 4, 10, 8) }; footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Children.Add(Footer); Grid.SetColumn(sync, 1); footer.Children.Add(sync); Grid.SetRow(footer, 3); grid.Children.Add(footer); Body.Content = grid;
         Editor.TextChanged += (_, _) => { if (!applying && !composing && !commitPending && !suppressComposition) SaveText(); };
         Editor.AddHandler(TextCompositionManager.PreviewTextInputStartEvent, new TextCompositionEventHandler((_, e) =>
         {
@@ -107,6 +114,33 @@ public sealed class NoteWindow : ChromeWindow
     }
     public void ChangeColorDuringComposition(string color) { if (compositionBase != null) compositionBase = compositionBase with { Color = color }; }
     public void ChangePinDuringComposition(bool pinned) { if (compositionBase != null) compositionBase = compositionBase with { Pinned = pinned }; }
+    public void ChangeAttachmentsDuringComposition(Attachment[]? values) { if (compositionBase != null) compositionBase = compositionBase with { Attachments = values == null ? null : [.. values] }; }
+    public void SetAttachmentMessage(string message) { localAttachmentMessage = message; attachmentMessage.Text = message; attachmentMessage.ToolTip = message; }
+    void RefreshAttachments(Note note)
+    {
+        var values = note.Attachments ?? [];
+        AttachmentPanel.Visibility = values.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
+        AttachmentPanel.Header = $"📎 附件 · {values.Length} 个";
+        var signature = ProtocolJson.Encode(values);
+        if (signature != attachmentSignature)
+        {
+            attachmentSignature = signature; attachmentRows.Children.Clear();
+            foreach (var value in values)
+            {
+                var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
+                row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var label = Theme.Text($"{value.Name} · {value.Size / 1024d:0.#} KiB", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
+                var download = new Button { Content = "下载", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton") };
+                download.Click += async (_, _) => { download.IsEnabled = false; try { await controller.DownloadAttachment(value, this); } finally { download.IsEnabled = true; } };
+                var remove = new Button { Content = "移除", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton"), IsEnabled = !note.Deleted };
+                remove.Click += (_, _) => controller.RemoveAttachment(Id, value, this);
+                row.Children.Add(label); Grid.SetColumn(download, 1); row.Children.Add(download); Grid.SetColumn(remove, 2); row.Children.Add(remove); attachmentRows.Children.Add(row);
+            }
+            attachmentMessage.TextWrapping = TextWrapping.Wrap; attachmentRows.Children.Add(attachmentMessage);
+        }
+        attachmentMessage.Text = controller.Sync.AttachmentStatus ?? localAttachmentMessage;
+        attachmentMessage.ToolTip = attachmentMessage.Text;
+    }
     public void Remap(string id, Receipt[] receipts, Change[] sent)
     {
         if (Id != id)
@@ -160,6 +194,7 @@ public sealed class NoteWindow : ChromeWindow
         if (note.Deleted && controller.Store.LastSaved && !composing && !commitPending && compositionBase == null)
         { if (IsLoaded) { remoteClose = true; Close(); if (controller.Editors.ContainsKey(Id)) remoteClose = false; } return; }
         Editor.IsReadOnly = note.Deleted && !composing && !commitPending;
+        RefreshAttachments(note);
         Title = note.Title + (note.ConflictOf == null ? "" : " · 冲突副本");
         if (!composing && !commitPending && compositionBase == null && Editor.Text != note.Text) ApplyText(note.Text);
         Motion.Color(Surface, Theme.Paper(note.Color).Color);

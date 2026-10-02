@@ -4,15 +4,35 @@ using System.Text.Json.Serialization;
 namespace SongNote.Core;
 
 public sealed record Note(string Id, string Text, string Color, bool Pinned, int Revision,
-    string UpdatedAt, bool Deleted, string? ConflictOf = null)
+    string UpdatedAt, bool Deleted, string? ConflictOf = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Attachment[]? Attachments = null)
 {
     [JsonIgnore] public string[] DisplayLines => Text.Split(['\r', '\n', '\u2028', '\u2029'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
     [JsonIgnore] public string Title => DisplayLines.FirstOrDefault() ?? "新便签";
     public static Note Blank() => new(Guid.NewGuid().ToString(), "", "yellow", false, 0, DateTimeOffset.UtcNow.ToString("O"), false);
 }
-public sealed record Change(string OpId, string NoteId, int BaseRevision, string Text, string Color, bool Pinned, bool Deleted)
+public sealed record Change(string OpId, string NoteId, int BaseRevision, string Text, string Color, bool Pinned, bool Deleted,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Attachment[]? Attachments = null)
 {
-    public static Change From(Note note) => new(Guid.NewGuid().ToString(), note.Id, note.Revision, note.Text, note.Color, note.Pinned, note.Deleted);
+    public static Change From(Note note) => new(Guid.NewGuid().ToString(), note.Id, note.Revision, note.Text, note.Color, note.Pinned, note.Deleted, note.Attachments == null ? null : [.. note.Attachments]);
+}
+public sealed record Attachment(string Id, string Name, long Size, string Sha256)
+{
+    public const long MaxBytes = 20 * 1024 * 1024;
+    public void Validate()
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(Id ?? "", "^[a-zA-Z0-9_-]{8,80}\\z") ||
+            string.IsNullOrEmpty(Name) || Name.Length > 255 || Name is "." or ".." || Name.Any(c => c is '/' or '\\' || c < 32 || c == 127) ||
+            Size < 0 || Size > MaxBytes || !System.Text.RegularExpressions.Regex.IsMatch(Sha256 ?? "", "^[a-f0-9]{64}\\z"))
+            throw new InvalidDataException("附件信息无效。");
+    }
+    public static void ValidateList(Attachment[]? values)
+    {
+        if (values == null) return;
+        if (values.Length > 20 || values.Any(a => a == null) || values.Select(a => a.Id).Distinct().Count() != values.Length)
+            throw new InvalidDataException("每条便签最多 20 个附件，附件 ID 不得重复。");
+        foreach (var a in values) a.Validate();
+    }
 }
 public sealed record Receipt(string OpId, string NoteId, int Revision, string Status);
 public sealed record SyncRequest(string DeviceId, Change[] Changes);

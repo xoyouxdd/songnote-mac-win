@@ -10,7 +10,9 @@ $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH='false'
 $env:DOTNET_CLI_TELEMETRY_OPTOUT='1'
 Push-Location $PSScriptRoot
 try {
-    $taskBuildArgs=@('build','src\SongNote.Windows\SongNote.Windows.csproj','-c','Release')
+    $taskRevision=(& git -C $taskRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot determine source revision' }
+    $taskBuildArgs=@('build','src\SongNote.Windows\SongNote.Windows.csproj','-c','Release',"-p:SourceRevisionId=$taskRevision")
     if ($OutputDirectory) {
         $taskOutput=[System.IO.Path]::GetFullPath($OutputDirectory)
         if (-not $taskOutput.StartsWith($taskRoot+[System.IO.Path]::DirectorySeparatorChar,[System.StringComparison]::OrdinalIgnoreCase)) { throw 'Build output must remain inside the project' }

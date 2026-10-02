@@ -57,9 +57,12 @@ public static class StateMerge
             response.Results.Length != sent.Length || response.Results.Select(r => r.OpId).Distinct().Count() != sent.Length)
             throw new InvalidDataException("同步响应不完整或协议版本无效。");
         foreach (var note in response.Notes)
+        {
+            Attachment.ValidateList(note.Attachments);
             if (string.IsNullOrEmpty(note.Id) || note.Text == null || note.Text.Length > 100000 || note.Revision < 0 || note.Revision > response.Sequence ||
                 !new[] { "yellow", "green", "blue", "pink", "purple", "gray" }.Contains(note.Color))
                 throw new InvalidDataException("服务器便签字段无效。");
+        }
         foreach (var op in sent)
         {
             var receipt = response.Results.SingleOrDefault(r => r.OpId == op.OpId);

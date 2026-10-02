@@ -19,6 +19,12 @@ import AppKit
     var syncError: String?
     var lastSyncAt: Date?
     var showSyncProgress = false
+    lazy var files = AttachmentFiles(directory: directory, configuration: configuration)
+    var uploadTask: Task<Void, Never>?
+    var uploadedHashes: Set<String> = []
+    var attachmentSupported = false
+    var attachmentStatus: String?
+    var fileRetryAfter = Date.distantPast
     init() throws {
         directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("SongNote")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
@@ -35,6 +41,11 @@ import AppKit
         if FileManager.default.fileExists(atPath: file.path) {
             state = try JSONDecoder().decode(LocalState.self, from: Data(contentsOf: file))
         } else { state = LocalState() }
+        guard state.notes.values.allSatisfy({ Attachment.validList($0.attachments) }),
+              state.pending.values.allSatisfy({ Attachment.validList($0.attachments) }),
+              (state.frozen ?? []).count <= 4, (state.frozen ?? []).allSatisfy({ Attachment.validList($0.attachments) }) else {
+            throw AttachmentFiles.failure("本机附件信息无效，原数据已保留。")
+        }
     }
     // Layout checks use deterministic fixtures without reading private notes,
     // creating files, or connecting to the production service.
@@ -113,12 +124,50 @@ import AppKit
         }
         sync()
     }
+    func ready(_ change: Change) -> Bool {
+        change.attachments == nil || (attachmentSupported && (change.attachments ?? []).allSatisfy { uploadedHashes.contains($0.sha256) })
+    }
+    func beginUploads() {
+        guard uploadTask == nil, Date() >= fileRetryAfter else { return }
+        let pending = ((state.frozen ?? []) + Array(state.pending.values)).filter { !ready($0) }
+        guard !pending.isEmpty else { return }
+        uploadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                self.attachmentStatus = "正在准备附件…"; self.onChange?()
+                if !self.attachmentSupported { try await self.files.checkSupport(); self.attachmentSupported = true }
+                var firstError: String?
+                for value in pending.flatMap({ $0.attachments ?? [] }) {
+                    if self.uploadedHashes.contains(value.sha256) { continue }
+                    self.attachmentStatus = "正在上传 · " + value.name; self.onChange?()
+                    do { try await self.files.upload(value); self.uploadedHashes.insert(value.sha256) }
+                    catch { if firstError == nil { firstError = error.localizedDescription } }
+                }
+                self.attachmentStatus = firstError
+                self.fileRetryAfter = firstError == nil ? .distantPast : Date().addingTimeInterval(15)
+            } catch {
+                self.attachmentStatus = error.localizedDescription
+                self.fileRetryAfter = Date().addingTimeInterval(15)
+            }
+            self.uploadTask = nil; self.onChange?(); self.sync()
+        }
+    }
     func sync(force: Bool = false) {
         if force && !lastSaved && !persist() { return }
         guard !syncing, lastSaved, force || Date() >= retryAfter else { return }
+        if force { fileRetryAfter = .distantPast }
+        beginUploads()
+        if (state.frozen ?? []).contains(where: { !ready($0) }) { return }
+        if (state.frozen ?? []).isEmpty {
+            var batch: [Change] = []
+            for change in state.pending.values.filter({ ready($0) }).sorted(by: { $0.note_id < $1.note_id }).prefix(4) {
+                guard let data = try? JSONEncoder().encode(SyncRequest(device_id: state.device_id, changes: batch + [change])), data.count <= 2 * 1024 * 1024 else { break }
+                batch.append(change)
+            }
+            if !batch.isEmpty { state.frozen = batch; guard persist() else { return } }
+        }
+        let changes = state.frozen ?? []
         syncing = true
-        let sent = Array(state.pending.values).sorted { $0.note_id < $1.note_id }.prefix(4)
-        let changes = Array(sent)
         showSyncProgress = force || !changes.isEmpty
         if showSyncProgress { status = "正在同步…"; onChange?() }
         var request = URLRequest(url: URL(string: configuration.base_url + "/v1/sync")!)
@@ -131,7 +180,7 @@ import AppKit
                 guard let self else { return }
                 self.syncing = false
                 guard error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data,
-                      let result = try? JSONDecoder().decode(SyncResponse.self, from: data), result.protocol == 1 else {
+                      let result = try? JSONDecoder().decode(SyncResponse.self, from: data), LocalState.validResponse(result, sent: changes) else {
                     self.failures += 1
                     self.retryAfter = Date().addingTimeInterval(min(30, pow(2, Double(min(self.failures, 5)))))
                     let code = (response as? HTTPURLResponse)?.statusCode
@@ -142,18 +191,22 @@ import AppKit
                     self.status = "\(self.syncError!) · 内容已保存在本机"
                     self.onChange?(); return
                 }
-                self.failures = 0; self.retryAfter = .distantPast
-                self.syncError = nil; self.lastSyncAt = Date()
-                let remapped = self.state.merge(result, sent: changes)
+                let original = self.state
+                var candidate = original
+                let remapped = candidate.merge(result, sent: changes)
+                candidate.frozen = []
+                self.state = candidate
                 let hasCopy = result.results.contains { $0.status == "conflict_copy" }
                 let hasDeleteConflict = result.results.contains { $0.status == "delete_conflict" }
                 if self.persist() {
+                    self.failures = 0; self.retryAfter = .distantPast
+                    self.syncError = nil; self.lastSyncAt = Date()
                     if hasCopy { self.status = "检测到冲突 · 已保留两份内容" }
                     else if hasDeleteConflict { self.status = "删除未执行 · 已保留另一端的新内容" }
                     else { self.status = self.state.pending.isEmpty ? "已同步 · \(DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .short))" : "本机有新修改 · 等待同步" }
-                }
-                self.onAccepted?(result.results, changes)
-                self.onRemap?(remapped); self.onChange?()
+                    self.onAccepted?(result.results, changes); self.onRemap?(remapped)
+                } else { self.state = original }
+                self.onChange?()
             }
         }.resume()
     }

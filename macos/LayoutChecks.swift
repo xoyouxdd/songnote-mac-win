@@ -96,6 +96,21 @@ import AppKit
                 cases += 1
             }
         }
-        print("LAYOUT_CHECK_OK: \(cases) native cases, seven long multiline cards, fixed single-line labels without overlap, one/two columns and notices")
+        var withFiles = original; withFiles.conflict_of = nil
+        withFiles.attachments = (0..<8).map { Attachment(id: UUID().uuidString, name: "很长的虚构附件名称检查窄窗-\($0).pdf", size: 1024, sha256: String(repeating: "a", count: 64)) }
+        delegate.store.state.deleteConflictIDs = nil; delegate.store.lastSaved = true
+        delegate.store.state.notes[original.id] = withFiles
+        for expanded in [false, true] {
+            editor.attachmentsExpanded = expanded; editor.refresh()
+            for size in [NSSize(width: 280, height: 240), NSSize(width: 380, height: 420)] {
+                editor.window.setContentSize(size); editor.window.contentView!.layoutSubtreeIfNeeded()
+                try checkControls(editor.window.contentView!)
+                try require(editor.attachmentContainer.frame.height <= 114, "Attachment list has no height bound")
+                try require(editor.editor.enclosingScrollView!.frame.height >= 60, "Attachment list squeezes the editor")
+                try require(editor.attachmentScroll.isHidden == !expanded, "Attachment fold state is wrong")
+                cases += 1
+            }
+        }
+        print("LAYOUT_CHECK_OK: \(cases) native cases, multiline cards, one/two columns, notices and folded/expanded attachments")
     }
 }

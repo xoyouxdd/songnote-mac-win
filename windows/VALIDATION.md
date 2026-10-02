@@ -1,4 +1,19 @@
-# Windows 首版验证记录
+# Windows 验证记录
+
+## 当前结果：1.2.0（2026-10-03）
+
+- 分支：`codex/note-attachments`；测试只用虚构便签、二进制文件及 `127.0.0.1` 内存服务，未读取真实便签或密钥。
+- Windows Release 构建 0 警告/0 错误；28 项核心测试通过，包含附件空正文、冻结后移除/冲突迁移、源文件删除后的缓存下载、损坏下载不覆盖现有文件、无效健康响应和缓存权限错误。
+- 44 项原生 WPF 检查通过，新增无附件隐藏、默认折叠、8 个长文件名附件的 280×240/380×420 展开布局；截图已检查，位于忽略目录 `build/attachments-windows/ui-check`。
+- 2 项真实 Node 回环集成通过，覆盖文字协议及后台上传期间文字同步、独立缓存的另一模拟设备下载、同 hash 重传、移除同步；8 项 Node 服务端测试通过，覆盖旧库迁移、旧回执重试、元数据键序重试、鉴权、长度/hash 校验、附件冲突和备份恢复。
+- 两端源码已改，Swift 语法检查通过；新增 Mac 模型/原生布局测试尚未执行，不能视为 macOS 编译或实际双端互传通过。
+- 未提交、推送、替换已安装程序或部署服务端；生产反代上传大小/超时仍待核对。当前旧服务端不支持附件时，新增文件保留在本机，不会静默丢弃附件描述。
+
+命令：`node --test --test-isolation=none tests/server.test.mjs`；`windows/build.ps1 -Test -CheckUi -Integration -OutputDirectory F:\便签\build\attachments-windows`；`python scripts/check-swift-syntax.py`。
+
+---
+
+## 历史验证记录（2026-10-01）
 
 ## UI 第二轮打磨（2026-10-01）
 
@@ -48,7 +63,7 @@ Mac 同步组合输入的修复与未执行项见 `docs/UI_OPTIMIZATION_HANDOFF.
 
 日期：2026-10-01。范围：Windows 客户端源码、Release 构建、本机持久化与协议合并、原生 WPF 布局和本机回环服务。没有连接生产地址、读取真实便签、注册开机启动或提交/推送代码。
 
-## 当前结果
+## 首版历史结果（2026-10-01）
 
 - `.NET SDK 10.0.401` 放在仓库 `build/dotnet`，SDK ZIP 根据微软官方发布元数据做 SHA512 比对通过；未安装到全局 SDK 目录。运行时仍使用系统已有的 .NET 10。
 - `SongNote.Windows` / `SongNote.Core` Release 构建通过，0 警告、0 错误。
@@ -80,10 +95,10 @@ SDK 缺失时先从 `windows/` 执行 `python bootstrap-sdk.py`（Python 3.11+�
 
 真实同步配置由用户放入 `windows/client-config.json` 后构建，或放入 `%LOCALAPPDATA%\SongNote/client-config.json`。必须使用真实 HTTPS 配置，不能安装模板里的占位密钥；正常启动若已存在有效配置会开始自动同步。不要把真实配置或密钥提交仓库。
 
-## 尚未验收
+## 首版未验收项（历史）
 
 真实微软拼音的连续选字、Esc、候选中关窗、取消退出及远端变化尚未人工实测；已实现候选抑制、组合基准、完成后延迟读取和会话代次保护，模型用例不替代输入法实测。
 
 当前显示器上越屏恢复已验证；真实多显示器、不同 DPI 的拖动/最大化/拔屏、辅助功能与高对比体验、托盘开机注册、同账号跨登录会话单实例仍需人工验收。客户端使用 WindowChrome 提供窗口行为，三个系统操作按钮是自绘控件调用 SystemCommands，不能称为原生系统按钮。
 
-本轮没有进行实际 Mac/Windows 两台客户端或生产服务器联调。Mac 源码仍保持上一轮状态，编译和真机验收见 `docs/UI_OPTIMIZATION_HANDOFF.md`。本机回环测试不等于双端生产互通验收，也未形成正式发布包。
+首版验收时未进行实际 Mac/Windows 双端或生产服务器联调。当前 Mac 源码与待验收项见 `docs/UI_OPTIMIZATION_HANDOFF.md`；本机回环测试不等于真实双端互通。

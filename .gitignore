@@ -1,6 +1,8 @@
 private/
 build/
 .DS_Store
+__pycache__/
+*.py[cod]
 server/data/
 *.sqlite*
 server/config.json

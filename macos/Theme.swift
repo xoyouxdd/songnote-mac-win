@@ -249,7 +249,7 @@ final class NoteCardView: NSView {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         showMatch(title, String(note.title.prefix(90)), query: trimmed, font: .systemFont(ofSize: 15, weight: .semibold), color: Theme.ink)
         showMatch(preview, String(note.preview.prefix(130)), query: trimmed, font: .systemFont(ofSize: 13), color: Theme.muted)
-        hint.stringValue = (deleteConflict ? "删除未执行 · " : "") + (note.conflict_of != nil ? "冲突副本 · " : (note.pinned ? "置顶 · " : "")) + Theme.timestamp(note.updated_at) + (pending ? " · 待同步" : "")
+        hint.stringValue = (deleteConflict ? "删除未执行 · " : "") + (note.conflict_of != nil ? "冲突副本 · " : (note.pinned ? "置顶 · " : "")) + Theme.timestamp(note.updated_at) + ((note.attachments ?? []).isEmpty ? "" : " · 附件 \((note.attachments ?? []).count)") + (pending ? " · 待同步" : "")
         hint.toolTip = hint.stringValue; setAccessibilityLabel(String(note.title.prefix(90)) + "，" + hint.stringValue)
     }
     func showMatch(_ label: NSTextField, _ text: String, query: String, font: NSFont, color: NSColor) {

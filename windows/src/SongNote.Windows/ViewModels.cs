@@ -17,7 +17,7 @@ public sealed class NoteViewModel : ViewModel
     public string Id => Note.Id;
     public string Title => Note.Title;
     public string Preview => string.Join(" ", Note.DisplayLines.Skip(1));
-    public string Hint => (DeleteConflict ? "删除未执行 · " : "") + (Note.ConflictOf != null ? "冲突副本 · " : Note.Pinned ? "置顶 · " : "") + Theme.Timestamp(Note.UpdatedAt) + (Pending ? " · 待同步" : "");
+    public string Hint => (DeleteConflict ? "删除未执行 · " : "") + (Note.ConflictOf != null ? "冲突副本 · " : Note.Pinned ? "置顶 · " : "") + Theme.Timestamp(Note.UpdatedAt) + ((Note.Attachments?.Length ?? 0) > 0 ? $" · 附件 {Note.Attachments!.Length}" : "") + (Pending ? " · 待同步" : "");
     public NoteViewModel(Note note) { Note = note; }
     public void Update(Note note, bool pending, bool conflict)
     {

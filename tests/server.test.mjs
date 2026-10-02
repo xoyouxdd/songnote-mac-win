@@ -1,13 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createStore, createServer } from '../server/server.mjs';
+import { createStore, createServer, maxFileBytes } from '../server/server.mjs';
 const change = (id, revision, text, extra = {}) => ({ op_id: randomUUID(), note_id: id, base_revision: revision,
   text, color: 'yellow', pinned: false, deleted: false, ...extra });
 const input = changes => ({ device_id: 'mac-test-device', changes });
+const attachment = (data, name = '测试附件.txt') => ({ id: randomUUID(), name, size: data.length,
+  sha256: createHash('sha256').update(data).digest('hex') });
 
 test('Offline writes, retries, conflicts, stale deletes and tombstones preserve content', () => {
   const s = createStore(':memory:');
@@ -68,5 +71,92 @@ test('HTTP rejects unauthenticated access and accepts authenticated sync', async
       body: JSON.stringify(input([change(randomUUID(), 0, 'HTTP 中文')])) });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).notes[0].text, 'HTTP 中文');
+  } finally { await new Promise(resolve => server.close(resolve)); store.close(); }
+});
+
+test('Attachments preserve legacy edits, explicit removal and conflict copies', () => {
+  const s = createStore(':memory:');
+  try {
+    const data = Buffer.from('虚构附件 中文\0binary'), a = attachment(data), id = randomUUID();
+    s.putFile(a.sha256, data); s.putFile(a.sha256, data);
+    assert.equal(s.db.prepare('SELECT count(*) AS n FROM files').get().n, 1);
+    const first = s.sync(input([change(id, 0, '', { attachments: [a] })]));
+    assert.deepEqual(first.notes[0].attachments, [a]);
+    const stable = change(randomUUID(), 0, '键序重试', { attachments: [a] });
+    const receipt = s.sync(input([stable])).results[0];
+    const reordered = { sha256: a.sha256, size: a.size, name: a.name, id: a.id };
+    assert.deepEqual(s.sync(input([{ ...stable, attachments: [reordered] }])).results[0], receipt);
+    const legacy = change(id, 1, '旧端编辑');
+    assert.deepEqual(s.sync(input([legacy])).notes[0].attachments, [a]);
+    const legacyRevision = s.sync(input([legacy])).results[0].revision;
+    const conflicting = s.sync(input([change(id, 1, '离线修改', { attachments: [] })]));
+    assert.deepEqual(conflicting.notes.find(n => n.id === id).attachments, [a]);
+    assert.deepEqual(conflicting.notes.find(n => n.id === conflicting.results[0].note_id).attachments, []);
+    const removed = s.sync(input([change(id, legacyRevision, '移除', { attachments: [] })]));
+    assert.deepEqual(removed.notes.find(n => n.id === id).attachments, []);
+    assert.deepEqual(Buffer.from(s.getFile(a.sha256)), data);
+  } finally { s.close(); }
+});
+
+test('Missing files, wrong sizes and unsafe metadata reject the whole note batch', () => {
+  const s = createStore(':memory:');
+  try {
+    const data = Buffer.from('fixture'), a = attachment(data), good = change(randomUUID(), 0, '保持原子');
+    assert.throws(() => s.sync(input([good, change(randomUUID(), 0, '', { attachments: [a] })])), { status: 409 });
+    assert.equal(s.snapshot().sequence, 0);
+    s.putFile(a.sha256, data);
+    for (const values of [[{ ...a, size: a.size + 1 }], [{ ...a, name: '../secret' }], [a, a], Array.from({ length: 21 }, () => ({ ...a, id: randomUUID() })), null]) {
+      assert.throws(() => s.sync(input([good, change(randomUUID(), 0, '', { attachments: values })])));
+      assert.equal(s.snapshot().sequence, 0);
+    }
+    assert.throws(() => s.putFile(a.sha256, Buffer.from('bad')), { status: 400 });
+    assert.throws(() => s.putFile(a.sha256, Buffer.alloc(maxFileBytes + 1)), { status: 413 });
+    const op = change(randomUUID(), 0, '', { attachments: [a] }); s.sync(input([op]));
+    assert.throws(() => s.sync(input([{ ...op, attachments: [] }])), { status: 409 });
+  } finally { s.close(); }
+});
+
+test('Legacy database migration keeps stored receipts retryable and backup contains file bytes', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'songnote-file-test-')), path = join(dir, 'old.sqlite');
+  let s;
+  try {
+    const op = change(randomUUID(), 0, '旧库内容'), result = { op_id: op.op_id, note_id: op.note_id, revision: 1, status: 'applied' };
+    const db = new DatabaseSync(path);
+    db.exec(`CREATE TABLE notes(id TEXT PRIMARY KEY,text TEXT NOT NULL,color TEXT NOT NULL,pinned INTEGER NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,deleted INTEGER NOT NULL,conflict_of TEXT);
+      CREATE TABLE operations(op_id TEXT PRIMARY KEY,device_id TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL);
+      CREATE TABLE metadata(key TEXT PRIMARY KEY,value INTEGER NOT NULL); INSERT INTO metadata VALUES('sequence',1);`);
+    db.prepare('INSERT INTO notes VALUES(?,?,?,?,?,?,?,?)').run(op.note_id, op.text, op.color, 0, 1, 't', 0, null);
+    db.prepare('INSERT INTO operations VALUES(?,?,?,?)').run(op.op_id, 'mac-test-device', JSON.stringify([op.note_id, 0, op.text, op.color, false, false]), JSON.stringify(result)); db.close();
+    s = createStore(path);
+    assert.deepEqual(s.sync(input([op])).results, [result]);
+    assert.deepEqual(s.snapshot().notes[0].attachments, []);
+    const bytes = Buffer.from('backup fixture'), a = attachment(bytes); s.putFile(a.sha256, bytes);
+    s.sync(input([change(op.note_id, 1, '附上文件', { attachments: [a] })]));
+    const backup = join(dir, 'backup.sqlite'); s.db.prepare('VACUUM INTO ?').run(backup); s.close(); s = undefined;
+    const restored = createStore(backup);
+    try { assert.deepEqual(Buffer.from(restored.getFile(a.sha256)), bytes); assert.deepEqual(restored.snapshot().notes[0].attachments, [a]); }
+    finally { restored.close(); }
+  } finally { s?.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Authenticated file HTTP supports zero bytes, checksums, retry and download', async () => {
+  const token = 't'.repeat(64), { server, store } = createServer({ token, database: ':memory:' });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${server.address().port}`, headers = { Authorization: `Bearer ${token}` };
+  try {
+    assert.ok((await (await fetch(base + '/health')).json()).features.includes('attachments'));
+    for (const bytes of [Buffer.alloc(0), Buffer.from('file \0 中文')]) {
+      const a = attachment(bytes), url = base + '/v1/files/' + a.sha256;
+      for (const method of ['GET', 'HEAD', 'PUT']) assert.equal((await fetch(url, { method })).status, 401);
+      assert.equal((await fetch(url, { method: 'HEAD', headers })).status, 404);
+      assert.equal((await fetch(url, { method: 'PUT', headers, body: Buffer.from('mismatch') })).status, 400);
+      for (let i = 0; i < 2; i++) assert.equal((await fetch(url, { method: 'PUT', headers, body: bytes })).status, 200);
+      const head = await fetch(url, { method: 'HEAD', headers }); assert.equal(head.status, 200); assert.equal(Number(head.headers.get('content-length')), bytes.length);
+      const downloaded = await fetch(url, { headers }); assert.equal(downloaded.headers.get('content-disposition'), 'attachment');
+      assert.deepEqual(Buffer.from(await downloaded.arrayBuffer()), bytes);
+    }
+    const oversized = await fetch(base + '/v1/files/' + 'a'.repeat(64), { method: 'PUT', headers, body: Buffer.alloc(maxFileBytes + 1) });
+    assert.equal(oversized.status, 413);
+    assert.equal((await fetch(base + '/v1/files/../../private', { headers })).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); store.close(); }
 });

@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using System.Net.Http;
 using System.Windows.Shell;
 using Forms = System.Windows.Forms;
 
@@ -82,6 +83,42 @@ public sealed class AppController : IDisposable
     public async Task SyncNow() { foreach (var editor in Editors.Values.ToArray()) editor.SaveText(); await Sync.Sync(force: true); }
     public void Pin(string id) { Store.TogglePin(id); if (Editors.TryGetValue(id, out var window) && CurrentNote(id) is Note note) window.ChangePinDuringComposition(note.Pinned); Sync.AfterEdit(); }
     public void Color(string id, string color) { Store.SetColor(id, color); if (Editors.TryGetValue(id, out var window)) window.ChangeColorDuringComposition(color); Sync.AfterEdit(); }
+    public async Task AddAttachment(string id, NoteWindow? window = null)
+    {
+        if (Sync.Files == null) return;
+        var picker = new OpenFileDialog { Title = "添加便签附件（单文件最多 20 MiB）", Multiselect = true };
+        if (picker.ShowDialog(window ?? (Window)Main) != true) return;
+        try
+        {
+            foreach (var path in picker.FileNames)
+            {
+                var attachment = await Sync.Files.Import(path);
+                var target = window?.Id ?? id;
+                Store.AddAttachment(target, attachment);
+                if (Editors.TryGetValue(target, out var editor)) editor.ChangeAttachmentsDuringComposition(CurrentNote(target)?.Attachments);
+                if (!Store.LastSaved) throw new IOException("附件信息保存失败，请先重试本地保存。文件已保留。");
+            }
+            Sync.AfterEdit(); Refresh();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+        { MessageBox.Show(window ?? (Window)Main, e.Message, "无法添加附件", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
+    public void RemoveAttachment(string id, Attachment value, NoteWindow window)
+    {
+        if (MessageBox.Show(window, "从这条便签移除附件？\n" + value.Name + "\n移除会同步到另一台电脑。", "移除附件", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        Store.RemoveAttachment(id, value.Id); window.ChangeAttachmentsDuringComposition(CurrentNote(id)?.Attachments); Sync.AfterEdit();
+    }
+    public async Task DownloadAttachment(Attachment value, NoteWindow window)
+    {
+        if (Sync.Files == null) return;
+        var name = new string(value.Name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray());
+        var picker = new SaveFileDialog { Title = "附件另存为", FileName = name, OverwritePrompt = true };
+        if (picker.ShowDialog(window) != true) return;
+        window.SetAttachmentMessage("正在下载 · " + value.Name);
+        try { await Sync.Files.Download(value, picker.FileName); window.SetAttachmentMessage("已下载 · " + value.Name); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
+        { window.SetAttachmentMessage("下载失败 · 可重试"); MessageBox.Show(window, e.Message, "附件下载失败", MessageBoxButton.OK, MessageBoxImage.Warning); }
+    }
     public void Delete(string id, Window? owner = null)
     {
         var note = CurrentNote(id); if (note == null || note.Deleted) return;
@@ -93,6 +130,8 @@ public sealed class AppController : IDisposable
     {
         var note = CurrentNote(id); if (note == null) return new();
         var menu = Theme.ColorsMenu(id, note.Color, Color);
+        var attach = new MenuItem { Header = "添加附件…", Icon = Theme.Glyph("\uE723", 13), IsEnabled = Sync.Files != null && !note.Deleted };
+        attach.Click += (_, _) => _ = AddAttachment(id, window); menu.Items.Add(new Separator()); menu.Items.Add(attach);
         var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)
         {

@@ -4,6 +4,8 @@ import ServiceManagement
 let colorNames = ["yellow": "黄色", "green": "绿色", "blue": "蓝色", "pink": "粉色", "purple": "紫色", "gray": "灰色"]
 let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
 
+final class AttachmentButton: NSButton { var attachment: Attachment? }
+
 @MainActor final class NoteWindow: NSObject, NSWindowDelegate, NSTextViewDelegate {
     var id: String
     let store: Store
@@ -26,6 +28,15 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     var didFinishEditing: (() -> Void)?
     var lastPinned = false
     var closing = false
+    let attachmentHeader = NSButton(title: "", target: nil, action: nil)
+    let attachmentContainer = NSView()
+    let attachmentScroll = NSScrollView()
+    let attachmentRows = NSStackView()
+    let attachmentMessage = NSTextField(labelWithString: "")
+    var attachmentHeight: NSLayoutConstraint!
+    var attachmentsExpanded = false
+    var displayedAttachments: [Attachment] = []
+    var localAttachmentMessage = ""
     var composition: NoteComposition?
     var compositionBase: Note? {
         get { composition?.note }
@@ -44,7 +55,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         let add = Theme.iconButton("plus", label: "新建便签（⌘N）", target: self, action: #selector(createNote))
         let list = Theme.iconButton("list.bullet", label: "便签列表（⌘L）", target: self, action: #selector(returnToList))
         pinButton = Theme.iconButton("pin", label: "列表置顶", target: self, action: #selector(setPin))
-        moreButton = Theme.iconButton("ellipsis", label: "更多：颜色、总在最前、删除", target: self, action: #selector(showMore))
+        moreButton = Theme.iconButton("ellipsis", label: "更多：附件、颜色、总在最前、删除", target: self, action: #selector(showMore))
         for button in [add, list, pinButton!, moreButton!] { tools.addArrangedSubview(button) }
         tools.spacing = 6; tools.alignment = .centerY
         Theme.titlebar(window, view: tools, width: 116, side: .right)
@@ -84,11 +95,27 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         syncButton.heightAnchor.constraint(equalToConstant: 22).isActive = true
         let footer = NSStackView(views: [statusLabel, NSView(), syncButton]); footer.spacing = 8
         footer.alignment = .centerY; footer.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(footer)
+        attachmentContainer.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(attachmentContainer)
+        attachmentHeader.target = self; attachmentHeader.action = #selector(toggleAttachments); Theme.button(attachmentHeader)
+        attachmentHeader.translatesAutoresizingMaskIntoConstraints = false; attachmentContainer.addSubview(attachmentHeader)
+        attachmentScroll.translatesAutoresizingMaskIntoConstraints = false; attachmentScroll.hasVerticalScroller = true
+        attachmentScroll.autohidesScrollers = true; attachmentScroll.drawsBackground = false
+        attachmentRows.orientation = .vertical; attachmentRows.alignment = .leading; attachmentRows.spacing = 3
+        attachmentRows.autoresizingMask = [.width]; attachmentScroll.documentView = attachmentRows
+        attachmentContainer.addSubview(attachmentScroll)
+        attachmentHeight = attachmentContainer.heightAnchor.constraint(equalToConstant: 0)
+        NSLayoutConstraint.activate([
+            attachmentContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), attachmentContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
+            attachmentContainer.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -4), attachmentHeight,
+            attachmentHeader.leadingAnchor.constraint(equalTo: attachmentContainer.leadingAnchor), attachmentHeader.topAnchor.constraint(equalTo: attachmentContainer.topAnchor), attachmentHeader.heightAnchor.constraint(equalToConstant: 22),
+            attachmentScroll.leadingAnchor.constraint(equalTo: attachmentContainer.leadingAnchor), attachmentScroll.trailingAnchor.constraint(equalTo: attachmentContainer.trailingAnchor),
+            attachmentScroll.topAnchor.constraint(equalTo: attachmentContainer.topAnchor, constant: 24), attachmentScroll.heightAnchor.constraint(equalToConstant: 90)
+        ])
         NSLayoutConstraint.activate([
             banner.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), banner.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             banner.topAnchor.constraint(equalTo: root.topAnchor, constant: 6), bannerHeight,
             scroll.topAnchor.constraint(equalTo: banner.bottomAnchor, constant: 4), scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            scroll.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -4),
+            scroll.bottomAnchor.constraint(equalTo: attachmentContainer.topAnchor, constant: -4),
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 12), footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -12),
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -8)])
         lastPinned = note.pinned
@@ -128,6 +155,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
         statusLabel.textColor = !store.lastSaved ? .systemRed : (store.syncError == nil ? Theme.muted : .systemOrange)
         statusLabel.toolTip = store.saveError ?? (store.saveStatus + "；" + store.syncStatus(for: id) + "。已同步表示服务器已接收，另一台电脑须运行应用并联网。")
         syncButton.isEnabled = !store.syncing
+        refreshAttachments(note)
         Theme.spin(syncButton, active: store.syncing && store.showSyncProgress)
     }
     // Persistent banner above the text: tinted box, icon, short copy; the long explanation is the tooltip.
@@ -162,6 +190,79 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     @objc func returnToList() { showList?() }
     @objc func createNote() { newNote?() }
     @objc func syncNow() { saveCommittedText(); store.sync(force: true) }
+    @objc func toggleAttachments() { attachmentsExpanded.toggle(); refresh() }
+    func refreshAttachments(_ note: Note) {
+        let values = note.attachments ?? []
+        attachmentContainer.isHidden = values.isEmpty
+        attachmentHeight.constant = values.isEmpty ? 0 : (attachmentsExpanded ? 114 : 24)
+        attachmentHeader.title = (attachmentsExpanded ? "▾ " : "▸ ") + "📎 附件 · \(values.count) 个"
+        attachmentScroll.isHidden = !attachmentsExpanded
+        if values != displayedAttachments {
+            displayedAttachments = values
+            for view in attachmentRows.arrangedSubviews { attachmentRows.removeArrangedSubview(view); view.removeFromSuperview() }
+            for value in values {
+                let label = NSTextField(labelWithString: value.name + " · " + ByteCountFormatter.string(fromByteCount: Int64(value.size), countStyle: .file))
+                label.font = .systemFont(ofSize: 11); label.lineBreakMode = .byTruncatingMiddle; label.toolTip = value.name
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+                let download = AttachmentButton(title: "下载", target: self, action: #selector(downloadAttachment(_:))); download.attachment = value; Theme.button(download)
+                let remove = AttachmentButton(title: "移除", target: self, action: #selector(removeAttachment(_:))); remove.attachment = value; Theme.button(remove); remove.isEnabled = !note.deleted
+                let row = NSStackView(views: [label, download, remove]); row.spacing = 4
+                attachmentRows.addArrangedSubview(row); row.widthAnchor.constraint(equalTo: attachmentScroll.contentView.widthAnchor).isActive = true
+            }
+            attachmentMessage.font = .systemFont(ofSize: 11); attachmentMessage.lineBreakMode = .byTruncatingTail
+            attachmentRows.addArrangedSubview(attachmentMessage)
+            attachmentMessage.widthAnchor.constraint(equalTo: attachmentScroll.contentView.widthAnchor).isActive = true
+            attachmentRows.frame = NSRect(x: 0, y: 0, width: max(240, window.contentView?.bounds.width ?? 380) - 24, height: CGFloat(values.count * 29 + 24))
+        }
+        attachmentMessage.stringValue = store.attachmentStatus ?? localAttachmentMessage
+        attachmentMessage.toolTip = attachmentMessage.stringValue
+    }
+    func showAttachmentError(_ message: String) {
+        let alert = NSAlert(); alert.messageText = "附件操作失败"; alert.informativeText = message
+        alert.beginSheetModal(for: window)
+    }
+    @objc func addAttachments() {
+        let panel = NSOpenPanel(); panel.canChooseDirectories = false; panel.allowsMultipleSelection = true
+        panel.message = "添加便签附件（单文件最多 20 MiB，每条最多 20 个）"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self else { return }
+            Task { @MainActor in
+                do {
+                    for source in panel.urls {
+                        let value = try await self.store.files.importFile(source)
+                        guard var note = self.store.state.notes[self.id], !note.deleted else { throw AttachmentFiles.failure("便签已删除。") }
+                        let values = (note.attachments ?? []) + [value]
+                        guard Attachment.validList(values) else { throw AttachmentFiles.failure("每条便签最多 20 个附件。") }
+                        note.attachments = values; self.composition?.update(attachments: values); self.store.update(note)
+                        guard self.store.lastSaved else { throw AttachmentFiles.failure("附件信息保存失败，请先重试本地保存。文件已保留。") }
+                    }
+                } catch { self.showAttachmentError(error.localizedDescription) }
+            }
+        }
+    }
+    @objc func removeAttachment(_ sender: AttachmentButton) {
+        guard let value = sender.attachment else { return }
+        let alert = NSAlert(); alert.messageText = "从这条便签移除附件？"; alert.informativeText = value.name + "\n移除会同步到另一台电脑。"
+        alert.addButton(withTitle: "移除"); alert.addButton(withTitle: "取消")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self, var note = self.store.state.notes[self.id], !note.deleted else { return }
+            note.attachments = (note.attachments ?? []).filter { $0.id != value.id }
+            self.composition?.update(attachments: note.attachments ?? []); self.store.update(note)
+        }
+    }
+    @objc func downloadAttachment(_ sender: AttachmentButton) {
+        guard let value = sender.attachment else { return }
+        let panel = NSSavePanel(); panel.nameFieldStringValue = value.name; panel.title = "附件另存为"
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let destination = panel.url, let self else { return }
+            sender.isEnabled = false; self.localAttachmentMessage = "正在下载 · " + value.name; self.refresh()
+            Task { @MainActor in
+                defer { sender.isEnabled = true }
+                do { try await self.store.files.download(value, to: destination); self.localAttachmentMessage = "已下载 · " + value.name; self.refresh() }
+                catch { self.localAttachmentMessage = "下载失败 · 可重试"; self.refresh(); self.showAttachmentError(error.localizedDescription) }
+            }
+        }
+    }
     func textDidChange(_ notification: Notification) { saveCommittedText() }
     func saveCommittedText() {
         if editor.hasMarkedText() {
@@ -205,6 +306,8 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     @objc func showMore() {
         guard let note = store.state.notes[id] else { return }
         let menu = NSMenu(); Theme.addColorPicker(to: menu, id: id, selected: note.color, target: self, action: #selector(setColor(_:)))
+        menu.addItem(.separator())
+        let attachment = menu.addItem(withTitle: "添加附件…", action: #selector(addAttachments), keyEquivalent: ""); attachment.target = self
         menu.addItem(.separator())
         let top = menu.addItem(withTitle: "总在最前（仅本机窗口）", action: #selector(setTop), keyEquivalent: "")
         top.target = self; top.state = window.level == .floating ? .on : .off
@@ -524,7 +627,7 @@ let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
     @objc func showList() { refresh(forceOrder: true); window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
     @objc func focusSearch() { showList(); window.makeFirstResponder(search) }
     @objc func syncNow() { for editor in Array(editors.values) { editor.saveCommittedText() }; store.sync(force: true) }
-    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "SongNote", .applicationVersion: "1.1.0", .credits: NSAttributedString(string: "Windows / Mac 私人桌面便签\n自动保存 · 离线编辑 · 双向同步")]) }
+    @objc func about() { NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "SongNote", .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版", .credits: NSAttributedString(string: "Windows / Mac 私人桌面便签\n自动保存 · 离线编辑 · 双向同步 · 文件附件")]) }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showList(); return true }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

@@ -119,7 +119,26 @@ public static class Diagnostics
         Require(example.Pinned && window.PinButton.Background is SolidColorBrush pinFill && pinFill.Color != Theme.Ink && pinFill.Color.A > 0, "Pinned state should be a colour tint"); cases++;
         var more = controller.NoteMenu(example.Id, window); RenderElement(more, Path.Combine(output, "menu-more.png"), 280);
         var headers = more.Items.OfType<MenuItem>().Select(i => i.Header as string).ToArray();
-        Require(headers.Contains("删除便签…") && headers.Contains("总在最前（仅本机窗口）") && !headers.Any(h => h?.Contains("最大化") == true), "More menu entries changed"); cases++;
+        Require(headers.Contains("添加附件…") && headers.Contains("删除便签…") && headers.Contains("总在最前（仅本机窗口）") && !headers.Any(h => h?.Contains("最大化") == true), "More menu entries changed"); cases++;
+        Require(window.AttachmentPanel.Visibility == Visibility.Collapsed, "Empty attachment area occupies note space"); cases++;
+        for (int i = 0; i < 8; i++) store.AddAttachment(example.Id, new(Guid.NewGuid().ToString(), "很长的虚构附件名称用于检查窄窗截断-" + i + ".pdf", 1024, new string('a', 64)));
+        window.Refresh(); Layout(window, 380, 420);
+        Require(window.AttachmentPanel.Visibility == Visibility.Visible && !window.AttachmentPanel.IsExpanded, "Attachments should start folded");
+        Render(window, Path.Combine(output, "note-attachments-folded.png")); cases++;
+        window.AttachmentPanel.IsExpanded = true;
+        foreach (var size in new[] { new Size(280, 240), new Size(380, 420) })
+        {
+            Layout(window, size.Width, size.Height);
+            Require(window.Editor.ActualHeight > 40 && window.AttachmentPanel.ActualHeight <= 130, "Attachment list squeezes the editor or exceeds its height limit");
+            var p = window.AttachmentPanel.TranslatePoint(new Point(), (FrameworkElement)window.Content);
+            Require(p.X >= 0 && p.X + window.AttachmentPanel.ActualWidth <= size.Width, "Attachment list overflows horizontally");
+            Render(window, Path.Combine(output, $"note-attachments-{size.Width:0}.png")); cases++;
+        }
+        // Return the main fixture to its original content for the existing close/delete checks.
+        foreach (var a in store.Snapshot().Notes[example.Id].Attachments ?? []) store.RemoveAttachment(example.Id, a.Id);
+        var attachmentSent = store.Freeze().Changes;
+        store.Apply(new(1, 1, store.Snapshot().Notes.Values.Select(n => n.Id == example.Id ? n with { Revision = 1 } : n).ToArray(), [new(attachmentSent[0].OpId, example.Id, 1, "applied")]), attachmentSent);
+        window.Refresh();
         var conflict = example with { ConflictOf = "missing-original" }; var state = store.Snapshot(); state.Notes[example.Id] = conflict;
         var file = new MemoryStateFile { Data = state }; var conflictStore = new LocalStore(file); using var second = new AppController(conflictStore, null, true); second.Open(example.Id);
         var conflictWindow = second.Editors[example.Id]; Layout(conflictWindow, 280, 240); Require(conflictWindow.Notice.Visibility == Visibility.Visible && conflictWindow.Editor.ActualHeight >= 120, "Conflict notice squeezed editor"); Render(conflictWindow, Path.Combine(output, "note-conflict-min.png")); cases++;
