@@ -44,7 +44,7 @@ public static class Program
                 if (!File.Exists(saved) && File.Exists(bundled)) File.Copy(bundled, saved);
                 if (File.Exists(saved)) { config = ProtocolJson.Decode<Configuration>(File.ReadAllText(saved)); config.Validate(); }
             }
-            controller = new(store, config); app.MainWindow = controller.Main;
+            controller = new(store, config, filePicker: demo ? new AttachmentPicker(data) : null); app.MainWindow = controller.Main;
             _ = Listen(instance, controller, lifetime.Token);
             app.Startup += (_, _) => controller.Start();
             app.SessionEnding += (_, e) =>
@@ -177,6 +177,7 @@ public static class Diagnostics
         }
         cases += ScrollBarChecks.Run(output);
         cases += SearchChecks.Run();
+        cases += AttachmentPickerChecks.Run();
         File.WriteAllText(Path.Combine(output, "result.txt"), $"UI_CHECK_OK: {cases} native WPF cases; layout, state safety and scrollbar interaction. No production data/network/startup changes.\n");
         main.Close(); window.Close(); second.Main.Close(); conflictWindow.Close();
     }

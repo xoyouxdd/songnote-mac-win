@@ -121,6 +121,6 @@ Mac 和 Windows 使用同一协议。单人使用，无账号和登录页面；�
 
 服务器启动任务：`SongNoteServer`；备份任务：`SongNoteBackup`。安装脚本为 `server/install.ps1`，须管理员运行。真实 `server/config.json` 必须私下配置，不放进仓库。
 
-维护连接使用 `scripts/remote.py`，在仓库 `build/deploy-tools` 安装 paramiko；支持本机私钥或不落盘的密码提示，始终核对 `~/.ssh/known_hosts`，不使用固定 Unix 控制套接字。交付时将 `VERSION`、`server/server.mjs`、`server/deploy.ps1` 和包含源码提交/文件 SHA-256 的 `manifest.json` 放入服务器 `C:\便签\releases\<版本-提交-时间>`，调用 `deploy.ps1 -CandidateRoot <目录> -ExpectedCommit <40位提交>`。
+维护连接使用 `scripts/remote.py`，在仓库 `build/deploy-tools` 安装 paramiko；支持本机私钥或不落盘的密码提示，始终核对 `~/.ssh/known_hosts`，不使用固定 Unix 控制套接字。交付时将 `VERSION`、`server/server.mjs`、`server/deploy.ps1` 和包含源码提交/文件 SHA-256 的 `manifest.json` 放入服务器 `C:\便签\releases\<版本-提交-时间>`，调用 `deploy.ps1 -CandidateRoot <目录> -ExpectedCommit <40位提交>`。Windows PowerShell 5.1 应先用 UTF-8 读取脚本再创建 ScriptBlock 执行，或使用 PowerShell 7，避免中文目录被默认 ANSI 解码。
 
 部署脚本先核对候选文件及版本、生成兼容新表结构的旧代码回滚文件；停止服务器和暂停备份任务后生成一致数据库快照，再安装和启动新服务。成功必须回读安装文件哈希及 health 的版本、附件能力和上限，并额外从本机通过公网 HTTPS 验证文件传输。部署失败保留当前数据库数据，恢复兼容代码，不用旧数据库覆盖升级后的写入。部署目录的 `before/` 和 `receipt.json` 仅留私有服务器；数据库、凭据及本机应用配置不上传 GitHub。

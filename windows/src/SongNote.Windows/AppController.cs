@@ -10,6 +10,7 @@ public sealed class AppController : IDisposable
     public static AppController Current { get; private set; } = null!;
     public LocalStore Store { get; }
     public SyncService Sync { get; }
+    public AttachmentPicker FilePicker { get; }
     public MainWindow Main { get; }
     public MainViewModel Model { get; } = new();
     public Dictionary<string, NoteWindow> Editors { get; } = [];
@@ -20,10 +21,10 @@ public sealed class AppController : IDisposable
     Forms.NotifyIcon? tray;
     readonly Forms.ContextMenuStrip trayMenu = new();
     readonly System.Drawing.Icon? icon;
-    public AppController(LocalStore store, Configuration? config, bool preview = false)
+    public AppController(LocalStore store, Configuration? config, bool preview = false, AttachmentPicker? filePicker = null, string? attachmentDirectory = null)
     {
         Current = this; Store = store; Preview = preview; dispatcher = Application.Current.Dispatcher;
-        Sync = new(store, config); Main = new(Model);
+        FilePicker = filePicker ?? new(); Sync = new(store, config, attachmentDirectory: attachmentDirectory); Main = new(Model);
         Store.Changed += () => dispatcher.BeginInvoke(new Action(() => Refresh()));
         Sync.Changed += () => dispatcher.BeginInvoke(new Action(() => Refresh()));
         Store.Accepted += (mapping, receipts, sent) => dispatcher.Invoke(() =>
@@ -86,22 +87,33 @@ public sealed class AppController : IDisposable
     public async Task AddAttachment(string id, NoteWindow? window = null)
     {
         if (Sync.Files == null) return;
-        var picker = new OpenFileDialog { Title = "添加便签附件（单文件最多 20 MiB）", Multiselect = true };
-        if (picker.ShowDialog(window ?? (Window)Main) != true) return;
+        if (window == null) { Open(id); window = Editors.GetValueOrDefault(id); }
         try
         {
-            foreach (var path in picker.FileNames)
+            var paths = await FilePicker.Open();
+            if (paths == null || !AttachmentTargetAlive(window?.Id ?? id, window)) return;
+            if (paths.Length + (CurrentNote(window?.Id ?? id)?.Attachments?.Length ?? 0) > 20)
+                throw new InvalidDataException("每条便签最多 20 个附件，请减少选择的文件。");
+            foreach (var path in paths)
             {
-                var attachment = await Sync.Files.Import(path);
+                var attachment = await Task.Run(() => Sync.Files.Import(path));
                 var target = window?.Id ?? id;
+                if (!AttachmentTargetAlive(target, window)) return;
                 Store.AddAttachment(target, attachment);
                 if (Editors.TryGetValue(target, out var editor)) editor.ChangeAttachmentsDuringComposition(CurrentNote(target)?.Attachments);
                 if (!Store.LastSaved) throw new IOException("附件信息保存失败，请先重试本地保存。文件已保留。");
             }
             Sync.AfterEdit(); Refresh();
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
-        { MessageBox.Show(window ?? (Window)Main, e.Message, "无法添加附件", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or InvalidOperationException or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
+        { AttachmentError(window, e.Message, "无法添加附件"); }
+    }
+    bool AttachmentTargetAlive(string id, NoteWindow? window) => !Quitting && !dispatcher.HasShutdownStarted && CurrentNote(id) is { Deleted: false } &&
+        (window == null || (Editors.TryGetValue(window.Id, out var current) && ReferenceEquals(current, window)));
+    void AttachmentError(NoteWindow? owner, string message, string title)
+    {
+        if (Quitting || dispatcher.HasShutdownStarted) return;
+        MessageBox.Show(owner != null && Editors.Values.Contains(owner) ? owner : Main, message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
     }
     public void RemoveAttachment(string id, Attachment value, NoteWindow window)
     {
@@ -112,12 +124,16 @@ public sealed class AppController : IDisposable
     {
         if (Sync.Files == null) return;
         var name = new string(value.Name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray());
-        var picker = new SaveFileDialog { Title = "附件另存为", FileName = name, OverwritePrompt = true };
-        if (picker.ShowDialog(window) != true) return;
-        window.SetAttachmentMessage("正在下载 · " + value.Name);
-        try { await Sync.Files.Download(value, picker.FileName); window.SetAttachmentMessage("已下载 · " + value.Name); }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or HttpRequestException or TaskCanceledException)
-        { window.SetAttachmentMessage("下载失败 · 可重试"); MessageBox.Show(window, e.Message, "附件下载失败", MessageBoxButton.OK, MessageBoxImage.Warning); }
+        try
+        {
+            var destination = await FilePicker.Save(name);
+            if (destination == null || !AttachmentTargetAlive(window.Id, window)) return;
+            window.SetAttachmentMessage("正在下载 · " + value.Name);
+            await Sync.Files.Download(value, destination);
+            if (AttachmentTargetAlive(window.Id, window)) window.SetAttachmentMessage("已下载 · " + value.Name);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException or HttpRequestException or TaskCanceledException or InvalidOperationException or System.ComponentModel.Win32Exception or System.Runtime.InteropServices.COMException)
+        { if (AttachmentTargetAlive(window.Id, window)) window.SetAttachmentMessage("下载失败 · 可重试"); AttachmentError(window, e.Message, "附件下载失败"); }
     }
     public void Delete(string id, Window? owner = null)
     {
@@ -130,7 +146,7 @@ public sealed class AppController : IDisposable
     {
         var note = CurrentNote(id); if (note == null) return new();
         var menu = Theme.ColorsMenu(id, note.Color, Color);
-        var attach = new MenuItem { Header = "添加附件…", Icon = Theme.Glyph("\uE723", 13), IsEnabled = Sync.Files != null && !note.Deleted };
+        var attach = new MenuItem { Header = "添加附件…", InputGestureText = "Ctrl+O", Icon = Theme.Glyph("\uE723", 13), IsEnabled = Sync.Files != null && !note.Deleted && !FilePicker.IsOpen };
         attach.Click += (_, _) => _ = AddAttachment(id, window); menu.Items.Add(new Separator()); menu.Items.Add(attach);
         var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)

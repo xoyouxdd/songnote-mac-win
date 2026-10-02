@@ -86,6 +86,11 @@ public sealed class NoteWindow : ChromeWindow
         Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .55); controller.Refresh(true); };
         Closing += CloseRequested; Closed += (_, _) => { Motion.Spin(spin, false); controller.NoteClosed(Id); };
         lastPinned = note.Pinned; Refresh();
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.Control)
+            { e.Handled = true; _ = controller.AddAttachment(Id, this); }
+        };
     }
     public ContextMenu ShowMore()
     {
@@ -129,7 +134,7 @@ public sealed class NoteWindow : ChromeWindow
             {
                 var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
                 row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var label = Theme.Text($"{value.Name} · {value.Size / 1024d:0.#} KiB", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
+                var label = Theme.Text($"{value.Name} · {AttachmentFileEntry.SizeLabel(value.Size)}", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
                 var download = new Button { Content = "下载", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton") };
                 download.Click += async (_, _) => { download.IsEnabled = false; try { await controller.DownloadAttachment(value, this); } finally { download.IsEnabled = true; } };
                 var remove = new Button { Content = "移除", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton"), IsEnabled = !note.Deleted };
