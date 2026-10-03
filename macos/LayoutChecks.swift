@@ -108,6 +108,18 @@ import AppKit
                 try require(editor.attachmentContainer.frame.height <= 114, "Attachment list has no height bound")
                 try require(editor.editor.enclosingScrollView!.frame.height >= 60, "Attachment list squeezes the editor")
                 try require(editor.attachmentScroll.isHidden == !expanded, "Attachment fold state is wrong")
+                if expanded {
+                    let rows = editor.attachmentRows
+                    rows.layoutSubtreeIfNeeded()
+                    try require(abs(rows.frame.width - editor.attachmentScroll.contentSize.width) < 1, "Attachment document is wider than its viewport")
+                    try require(rows.isFlipped && rows.arrangedSubviews.first!.frame.intersects(editor.attachmentScroll.contentView.bounds), "Expanded attachments open on a blank viewport")
+                    try require(rows.frame.height > editor.attachmentScroll.contentSize.height, "Long attachment list cannot scroll")
+                    for row in rows.arrangedSubviews {
+                        let frame = row.alignmentRect(forFrame: row.frame)
+                        try require(frame.minX >= -1 && frame.maxX <= rows.bounds.width + 1, "Attachment row clipped horizontally")
+                        try checkControls(row)
+                    }
+                }
                 cases += 1
             }
         }

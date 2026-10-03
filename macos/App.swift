@@ -5,6 +5,7 @@ let colorNames = ["yellow": "黄色", "green": "绿色", "blue": "蓝色", "pink
 let colorOrder = ["yellow", "green", "blue", "pink", "purple", "gray"]
 
 final class AttachmentButton: NSButton { var attachment: Attachment? }
+final class AttachmentListView: NSStackView { override var isFlipped: Bool { true } }
 
 @MainActor final class NoteWindow: NSObject, NSWindowDelegate, NSTextViewDelegate {
     var id: String
@@ -31,7 +32,7 @@ final class AttachmentButton: NSButton { var attachment: Attachment? }
     let attachmentHeader = NSButton(title: "", target: nil, action: nil)
     let attachmentContainer = NSView()
     let attachmentScroll = NSScrollView()
-    let attachmentRows = NSStackView()
+    let attachmentRows = AttachmentListView()
     let attachmentMessage = NSTextField(labelWithString: "")
     var attachmentHeight: NSLayoutConstraint!
     var attachmentsExpanded = false
@@ -101,7 +102,12 @@ final class AttachmentButton: NSButton { var attachment: Attachment? }
         attachmentScroll.translatesAutoresizingMaskIntoConstraints = false; attachmentScroll.hasVerticalScroller = true
         attachmentScroll.autohidesScrollers = true; attachmentScroll.drawsBackground = false
         attachmentRows.orientation = .vertical; attachmentRows.alignment = .leading; attachmentRows.spacing = 3
-        attachmentRows.autoresizingMask = [.width]; attachmentScroll.documentView = attachmentRows
+        attachmentRows.translatesAutoresizingMaskIntoConstraints = false; attachmentScroll.documentView = attachmentRows
+        NSLayoutConstraint.activate([
+            attachmentRows.leadingAnchor.constraint(equalTo: attachmentScroll.contentView.leadingAnchor),
+            attachmentRows.topAnchor.constraint(equalTo: attachmentScroll.contentView.topAnchor),
+            attachmentRows.widthAnchor.constraint(equalTo: attachmentScroll.contentView.widthAnchor)
+        ])
         attachmentContainer.addSubview(attachmentScroll)
         attachmentHeight = attachmentContainer.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -207,12 +213,13 @@ final class AttachmentButton: NSButton { var attachment: Attachment? }
                 let download = AttachmentButton(title: "下载", target: self, action: #selector(downloadAttachment(_:))); download.attachment = value; Theme.button(download)
                 let remove = AttachmentButton(title: "移除", target: self, action: #selector(removeAttachment(_:))); remove.attachment = value; Theme.button(remove); remove.isEnabled = !note.deleted
                 let row = NSStackView(views: [label, download, remove]); row.spacing = 4
-                attachmentRows.addArrangedSubview(row); row.widthAnchor.constraint(equalTo: attachmentScroll.contentView.widthAnchor).isActive = true
+                attachmentRows.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: attachmentRows.widthAnchor).isActive = true
+                row.heightAnchor.constraint(equalToConstant: 24).isActive = true
             }
             attachmentMessage.font = .systemFont(ofSize: 11); attachmentMessage.lineBreakMode = .byTruncatingTail
             attachmentRows.addArrangedSubview(attachmentMessage)
-            attachmentMessage.widthAnchor.constraint(equalTo: attachmentScroll.contentView.widthAnchor).isActive = true
-            attachmentRows.frame = NSRect(x: 0, y: 0, width: max(240, window.contentView?.bounds.width ?? 380) - 24, height: CGFloat(values.count * 29 + 24))
+            attachmentMessage.widthAnchor.constraint(equalTo: attachmentRows.widthAnchor).isActive = true
         }
         attachmentMessage.stringValue = store.attachmentStatus ?? localAttachmentMessage
         attachmentMessage.toolTip = attachmentMessage.stringValue
@@ -398,7 +405,7 @@ final class AttachmentButton: NSButton { var attachment: Attachment? }
                 guard let self else { return }
                 if Theme.reduceMotion {
                     Theme.finishPresentations()
-                    func clear(_ view: NSView) { view.layer?.removeAllAnimations(); for child in view.subviews { clear(child) } }
+                    @MainActor func clear(_ view: NSView) { view.layer?.removeAllAnimations(); for child in view.subviews { clear(child) } }
                     if let root = self.window.contentView { clear(root) }
                     for editor in self.editors.values { clear(editor.tools); if let root = editor.window.contentView { clear(root) } }
                 }
@@ -424,7 +431,7 @@ final class AttachmentButton: NSButton { var attachment: Attachment? }
         noteMenu.addItem(withTitle: "立即同步", action: #selector(syncNow), keyEquivalent: "r").target = self
         let editItem = NSMenuItem(); editItem.title = "编辑"; let editMenu = NSMenu(title: "编辑"); editItem.submenu = editMenu; main.addItem(editItem)
         for (name, action, key) in [("撤销", "undo:", "z"), ("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { editMenu.addItem(withTitle: name, action: Selector(action), keyEquivalent: key) }
-        let redo = NSMenuItem(title: "重做", action: Selector("redo:"), keyEquivalent: "z"); redo.keyEquivalentModifierMask = [.command, .shift]; editMenu.insertItem(redo, at: 1)
+        let redo = NSMenuItem(title: "重做", action: NSSelectorFromString("redo:"), keyEquivalent: "z"); redo.keyEquivalentModifierMask = [.command, .shift]; editMenu.insertItem(redo, at: 1)
         editMenu.addItem(.separator()); editMenu.addItem(withTitle: "搜索便签", action: #selector(focusSearch), keyEquivalent: "f").target = self
         let windowItem = NSMenuItem(); windowItem.title = "窗口"; let windowMenu = NSMenu(title: "窗口"); windowItem.submenu = windowMenu; main.addItem(windowItem)
         windowMenu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

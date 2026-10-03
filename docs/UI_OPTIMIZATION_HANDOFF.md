@@ -7,7 +7,7 @@
 - Windows/Mac 便签支持附件：更多菜单添加，正文下方默认折叠，展开后下载或移除；20 MiB/文件、20 个/便签。
 - 文件先复制至本机缓存，后台上传并按 hash 去重；已上传操作才进入冻结批次，其他便签文字仍可同步；下载校验大小与 SHA-256 后原子保存。
 - 两端将附件加入整条便签冲突处理及输入法菜单覆盖状态。空正文的附件便签属于正式便签，关闭不丢弃。
-- Windows 持久保存 FrozenBatch；Mac 已新增可兼容旧状态的 LocalState.frozen，失败重试原载荷、合并保存失败保留旧状态。Mac 原生异常路径尚未执行，不能将源码实现等同于运行验收。
+- Windows 持久保存 FrozenBatch；Mac 已新增可兼容旧状态的 LocalState.frozen，失败重试原载荷、合并保存失败保留旧状态。Mac 本机已验证响应丢失重启重试、后续编辑与回执保存失败恢复，详见 [Mac 验证记录](MAC_VALIDATION.md)。
 - 服务端保持 protocol=1，通过 health 的 attachments 能力协商扩展；旧客户端省略字段时保留服务器附件。文件与便签同 SQLite，原有 VACUUM INTO 备份包含文件。
 - Windows Release 0 警告/错误、28 核心、57 原生检查、2 Node 回环集成、8 服务端测试通过；Swift 语法解析通过。部署与本机原入口更新状态见 [Windows 验证记录](../windows/VALIDATION.md)。
 
@@ -17,9 +17,9 @@ Windows 1.2.2 的 `AttachmentPicker.cs` 负责选择器状态，`SystemFilePicke
 
 `macos/App.swift`：窗口、折叠附件及交互；`Theme.swift`：卡片/样式/动效；`Models.swift`：附件、冻结载荷、合并和输入法基准；`Store.swift`：原子保存、后台上传和同步；`AttachmentFiles.swift`：私有文件缓存与传输；`LayoutChecks.swift`：虚构内容原生几何检查。构建脚本已包含新增文件和 CryptoKit，最低 macOS 13。
 
-## Mac 待验收
+## Mac 验证与待验收
 
-当前 Windows 主机没有 swiftc/macOS SDK。下列模型用例、21 个 AppKit 布局/状态检查、真实输入法、签名和运行均未在 Mac 执行；实际 Windows/Mac 双端互传也未验收。
+2026-10-03 已在 Mac 完成模型测试、21 个 AppKit 布局/状态检查、60 条回环与原生运行断言、系统附件选择/另存操作和签名验证，并安装运行 1.2.2。附件空白视口和宽度问题已修复，详见 [Mac 验证记录](MAC_VALIDATION.md)。真实输入法、完整多屏/无障碍/开机启动和实际 Windows/Mac 双端互传仍待验收。
 
 ```sh
 mkdir -p build
@@ -31,7 +31,7 @@ build/SongNote.app/Contents/MacOS/SongNote --check-layout
 
 模型检查包含旧 JSON、草稿、冻结后的附件变更、冲突副本、旧删除、输入法属性覆盖；原生布局检查包含长文本卡片、单/双列、冲突和保存失败，以及 280×240/380×420 附件折叠/展开。模型测试不使用 `-O`，保留断言。
 
-完成编译后使用虚构文件与本机测试服务，逐项验证：
+下列场景清单保留为完整验收范围；本轮已覆盖项及未验证边界以 Mac 验证记录为准。后续继续使用虚构文件与本机测试服务：
 
 1. 旧安装数据可读取；附件空正文关闭/重启仍保留；未编辑空草稿关闭后丢弃。
 2. 上传中续写、移除或再添加附件；断网、响应丢失且服务已接受、退出重启后，原冻结操作先重试，后续操作与正确版本继续提交。
@@ -45,4 +45,4 @@ build/SongNote.app/Contents/MacOS/SongNote --check-layout
 
 ## 历史边界
 
-2026-10-01 的 UI、输入法、滚动条与首次 Windows 验证保留于 [Windows 历史验证记录](../windows/VALIDATION.md)。[UI_AUDIT.md](UI_AUDIT.md) 是旧 Mac UI 验收材料，不作为 1.2.0 的原生证据。此前 Mac 单 pending 的冻结重试缺口已在本轮源码处理，仍需要上述异常场景的 Mac 实测。
+2026-10-01 的 UI、输入法、滚动条与首次 Windows 验证保留于 [Windows 历史验证记录](../windows/VALIDATION.md)。[UI_AUDIT.md](UI_AUDIT.md) 是旧 Mac UI 验收材料，不作为 1.2.0 的原生证据。此前 Mac 单 pending 的冻结重试缺口已处理，并于 2026-10-03 完成部分异常场景的 Mac 回环实测；仍需完整真实双端和输入法验收。

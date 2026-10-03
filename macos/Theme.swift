@@ -48,11 +48,11 @@ import QuartzCore
             (accents[color] ?? ink).setFill(); NSBezierPath(ovalIn: rect.insetBy(dx: 2, dy: 2)).fill(); return true
         }
     }
-    static func animate(_ duration: TimeInterval = 0.18, changes: @escaping () -> Void, completion: (() -> Void)? = nil) {
+    static func animate(_ duration: TimeInterval = 0.18, changes: @escaping () -> Void, completion: (@MainActor @Sendable () -> Void)? = nil) {
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = reduceMotion ? 0 : duration; context.allowsImplicitAnimation = !reduceMotion
             changes()
-        }, completionHandler: completion)
+        }, completionHandler: { Task { @MainActor in completion?() } })
     }
     static func background(_ layer: CALayer?, color: NSColor) {
         guard let layer else { return }
