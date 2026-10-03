@@ -3,6 +3,49 @@ using System.Windows.Controls.Primitives;
 
 namespace SongNote.Windows;
 
+// One line of file chips under the text; chips that do not fit collapse into a "+N" chip.
+public sealed class AttachmentStrip : Panel
+{
+    public const double ChipHeight = 24, Gap = 6, MaxChip = 150;
+    public Button Overflow { get; }
+    public int Shown { get; private set; }
+    public AttachmentStrip(Button overflow) { Overflow = overflow; Children.Add(overflow); ClipToBounds = true; }
+    List<UIElement> Chips => Children.Cast<UIElement>().Where(c => c != Overflow).ToList();
+    void SetOverflow(int count)
+    {
+        var text = "+" + count; if (!Equals(Overflow.Content, text)) Overflow.Content = text;
+        Overflow.Measure(new Size(80, ChipHeight));
+    }
+    protected override Size MeasureOverride(Size available)
+    {
+        var chips = Chips; double x = 0; int shown = 0;
+        foreach (var chip in chips) chip.Measure(new Size(MaxChip, ChipHeight));
+        for (int i = 0; i < chips.Count; i++)
+        {
+            int remaining = chips.Count - i - 1; double reserve = 0;
+            if (remaining > 0) { SetOverflow(remaining); reserve = Overflow.DesiredSize.Width + Gap; }
+            double width = Math.Min(MaxChip, chips[i].DesiredSize.Width);
+            if (x + width + reserve > available.Width && !(i == 0 && remaining == 0)) break;
+            x += width + Gap; shown++;
+        }
+        Shown = shown; SetOverflow(chips.Count - shown);
+        for (int i = 0; i < chips.Count; i++) { var visible = i < shown ? Visibility.Visible : Visibility.Hidden; if (chips[i].Visibility != visible) chips[i].Visibility = visible; }
+        var overflow = shown < chips.Count ? Visibility.Visible : Visibility.Hidden; if (Overflow.Visibility != overflow) Overflow.Visibility = overflow;
+        return new Size(double.IsInfinity(available.Width) ? x : available.Width, chips.Count == 0 ? 0 : ChipHeight);
+    }
+    protected override Size ArrangeOverride(Size final)
+    {
+        double x = 0; var chips = Chips;
+        for (int i = 0; i < chips.Count; i++)
+        {
+            if (i < Shown) { double width = Math.Min(Math.Min(MaxChip, chips[i].DesiredSize.Width), final.Width); chips[i].Arrange(new Rect(x, 0, width, ChipHeight)); x += width + Gap; }
+            else chips[i].Arrange(new Rect(0, 0, 0, 0));
+        }
+        Overflow.Arrange(Shown < chips.Count ? new Rect(x, 0, Overflow.DesiredSize.Width, ChipHeight) : new Rect(0, 0, 0, 0));
+        return final;
+    }
+}
+
 public sealed class NoteWindow : ChromeWindow
 {
     readonly AppController controller;
@@ -11,7 +54,7 @@ public sealed class NoteWindow : ChromeWindow
     {
         AcceptsReturn = true, AcceptsTab = true, TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-        BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(16, 12, 16, 12), FontSize = 16,
+        BorderThickness = new Thickness(0), Background = Brushes.Transparent, Padding = new Thickness(14, 6, 14, 8), FontSize = 15,
         Foreground = new SolidColorBrush(Theme.Ink), IsUndoEnabled = true
     };
     public TextBlock Footer { get; } = Theme.Text("", 11);
@@ -27,31 +70,33 @@ public sealed class NoteWindow : ChromeWindow
     bool lastPinned;
     public bool Editing => IsActive && Editor.IsKeyboardFocusWithin;
     public Button PinButton => pin;
-    public Expander AttachmentPanel { get; } = new() { Margin = new Thickness(12, 0, 12, 4), Visibility = Visibility.Collapsed };
-    readonly StackPanel attachmentRows = new();
-    readonly TextBlock attachmentMessage = Theme.Text("", 11);
+    public AttachmentStrip AttachmentPanel { get; }
+    Attachment[] attachmentValues = [];
+    readonly HashSet<string> downloading = [];
     string attachmentSignature = "";
     string localAttachmentMessage = "";
     public NoteWindow(AppController controller, Note note) : base(maximizable: false)
     {
         this.controller = controller; Id = note.Id; Width = 380; Height = 420; MinWidth = 280; MinHeight = 240;
-        Tools.Children.Add(Theme.Icon("\uE710", "新建便签（Ctrl+N）", controller.NewNote));
-        Tools.Children.Add(Theme.Icon("\uE8FD", "便签列表（Ctrl+L）", () => controller.ShowList()));
+        // Only pin and "more" stay in the titlebar; new note and the list live in the menu and Ctrl+N / Ctrl+L.
         pin = Theme.Icon("\uE718", "列表置顶", () => controller.Pin(Id)); Tools.Children.Add(pin);
-        more = Theme.Icon("\uE712", "更多：附件、颜色、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
+        more = Theme.Icon("\uE712", "更多：新建、列表、颜色、附件、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
+        var overflow = new Button { Style = Theme.Style("SoftButton"), Height = AttachmentStrip.ChipHeight, Padding = new Thickness(8, 0, 8, 0) };
+        overflow.Click += (_, _) => ShowAllAttachments(overflow);
+        AttachmentPanel = new AttachmentStrip(overflow) { Margin = new Thickness(14, 2, 14, 2), Visibility = Visibility.Collapsed };
         var grid = new Grid(); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition()); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         noticeText.TextWrapping = TextWrapping.Wrap; noticeText.Foreground = new SolidColorBrush(Theme.Ink); noticeAction.Style = Theme.Style("SoftButton");
         noticeIcon.Margin = new Thickness(0, 1, 8, 0); noticeIcon.VerticalAlignment = VerticalAlignment.Top;
         var notice = new DockPanel(); DockPanel.SetDock(noticeIcon, Dock.Left); DockPanel.SetDock(noticeAction, Dock.Right);
         notice.Children.Add(noticeIcon); notice.Children.Add(noticeAction); notice.Children.Add(noticeText); Notice.Child = notice; grid.Children.Add(Notice);
         noticeAction.Click += (_, _) => { var state = controller.Store.Snapshot(); if (state.Notes.TryGetValue(Id, out var current) && current.Deleted) _ = controller.SyncNow(); else if (state.DeleteConflictIds.Contains(Id)) controller.Store.Acknowledge(Id); else if (state.Notes.TryGetValue(Id, out var n) && n.ConflictOf != null) controller.Open(n.ConflictOf); };
-        // A calmer writing surface: about 1.55x line height for 16px Chinese text.
-        TextBlock.SetLineHeight(Editor, 25); TextBlock.SetLineStackingStrategy(Editor, LineStackingStrategy.BlockLineHeight);
+        // A calmer writing surface: about 1.6x line height for 15px Chinese text.
+        TextBlock.SetLineHeight(Editor, 24); TextBlock.SetLineStackingStrategy(Editor, LineStackingStrategy.BlockLineHeight);
         Grid.SetRow(Editor, 1); grid.Children.Add(Editor);
-        AttachmentPanel.Content = new ScrollViewer { Content = attachmentRows, MaxHeight = 90, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Grid.SetRow(AttachmentPanel, 2); grid.Children.Add(AttachmentPanel);
-        sync = Theme.Icon("\uE895", "立即同步（Ctrl+R）；本机保存失败时先重试", () => _ = controller.SyncNow()); sync.RenderTransform = spin; sync.RenderTransformOrigin = new Point(.5, .5);
-        var footer = new Grid { Margin = new Thickness(12, 4, 10, 8) }; footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Children.Add(Footer); Grid.SetColumn(sync, 1); footer.Children.Add(sync); Grid.SetRow(footer, 3); grid.Children.Add(footer); Body.Content = grid;
+        sync = Theme.Icon("\uE895", "立即同步（Ctrl+R）；本机保存失败时先重试", () => _ = controller.SyncNow()); sync.RenderTransform = spin; sync.RenderTransformOrigin = new Point(.5, .5); sync.Foreground = Theme.Muted;
+        Footer.Foreground = Theme.Faint;
+        var footer = new Grid { Margin = new Thickness(14, 4, 10, 8), MinHeight = 28 }; footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.Children.Add(Footer); Grid.SetColumn(sync, 1); footer.Children.Add(sync); Grid.SetRow(footer, 3); grid.Children.Add(footer); Body.Content = grid;
         Editor.TextChanged += (_, _) => { if (!applying && !composing && !commitPending && !suppressComposition) SaveText(); };
         Editor.AddHandler(TextCompositionManager.PreviewTextInputStartEvent, new TextCompositionEventHandler((_, e) =>
         {
@@ -83,7 +128,7 @@ public sealed class NoteWindow : ChromeWindow
             }
         };
         Editor.GotKeyboardFocus += (_, _) => controller.Refresh(); Editor.LostKeyboardFocus += (_, _) => controller.Refresh(true);
-        Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .55); controller.Refresh(true); };
+        Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .35); controller.Refresh(true); };
         Closing += CloseRequested; Closed += (_, _) => { Motion.Spin(spin, false); controller.NoteClosed(Id); };
         lastPinned = note.Pinned; Refresh();
         PreviewKeyDown += (_, e) =>
@@ -120,32 +165,66 @@ public sealed class NoteWindow : ChromeWindow
     public void ChangeColorDuringComposition(string color) { if (compositionBase != null) compositionBase = compositionBase with { Color = color }; }
     public void ChangePinDuringComposition(bool pinned) { if (compositionBase != null) compositionBase = compositionBase with { Pinned = pinned }; }
     public void ChangeAttachmentsDuringComposition(Attachment[]? values) { if (compositionBase != null) compositionBase = compositionBase with { Attachments = values == null ? null : [.. values] }; }
-    public void SetAttachmentMessage(string message) { localAttachmentMessage = message; attachmentMessage.Text = message; attachmentMessage.ToolTip = message; }
+    public void SetAttachmentMessage(string message) { localAttachmentMessage = message; Refresh(); }
     static string SizeLabel(long size) => size < 1024 ? $"{size} B" : size < 1024 * 1024 ? $"{size / 1024d:0.#} KiB" : $"{size / (1024d * 1024):0.#} MiB";
+    static string FileGlyph(string name) => Path.GetExtension(name).ToLowerInvariant() switch
+    {
+        ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".webp" or ".heic" => "\uEB9F",
+        ".zip" or ".rar" or ".7z" or ".gz" => "\uF012",
+        _ => "\uE8A5"
+    };
     void RefreshAttachments(Note note)
     {
-        var values = note.Attachments ?? [];
+        var values = note.Attachments ?? []; attachmentValues = values;
         AttachmentPanel.Visibility = values.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
-        AttachmentPanel.Header = $"📎 附件 · {values.Length} 个";
         var signature = ProtocolJson.Encode(values);
-        if (signature != attachmentSignature)
+        if (signature == attachmentSignature) return;
+        attachmentSignature = signature;
+        foreach (var chip in AttachmentPanel.Children.OfType<Button>().Where(b => b != AttachmentPanel.Overflow).ToArray()) AttachmentPanel.Children.Remove(chip);
+        foreach (var value in values)
         {
-            attachmentSignature = signature; attachmentRows.Children.Clear();
-            foreach (var value in values)
-            {
-                var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
-                row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var label = Theme.Text($"{value.Name} · {SizeLabel(value.Size)}", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
-                var download = new Button { Content = "下载", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton") };
-                download.Click += async (_, _) => { download.IsEnabled = false; try { await controller.DownloadAttachment(value, this); } finally { download.IsEnabled = true; } };
-                var remove = new Button { Content = "移除", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton"), IsEnabled = !note.Deleted };
-                remove.Click += (_, _) => controller.RemoveAttachment(Id, value, this);
-                row.Children.Add(label); Grid.SetColumn(download, 1); row.Children.Add(download); Grid.SetColumn(remove, 2); row.Children.Add(remove); attachmentRows.Children.Add(row);
-            }
-            attachmentMessage.TextWrapping = TextWrapping.Wrap; attachmentRows.Children.Add(attachmentMessage);
+            var content = new StackPanel { Orientation = Orientation.Horizontal };
+            content.Children.Add(Theme.Glyph(FileGlyph(value.Name), 12, Theme.Muted));
+            content.Children.Add(new TextBlock { Text = value.Name, Margin = new Thickness(5, 0, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = AttachmentStrip.MaxChip - 40, VerticalAlignment = VerticalAlignment.Center });
+            var chip = new Button { Style = Theme.Style("SoftButton"), Height = AttachmentStrip.ChipHeight, Padding = new Thickness(8, 0, 8, 0), Content = content,
+                ToolTip = $"{value.Name} · {SizeLabel(value.Size)}（点击下载或移除）" };
+            System.Windows.Automation.AutomationProperties.SetName(chip, "附件 " + value.Name);
+            chip.Click += (_, _) => { var menu = AttachmentMenu(value); menu.PlacementTarget = chip; menu.Placement = PlacementMode.Top; menu.IsOpen = true; };
+            AttachmentPanel.Children.Insert(AttachmentPanel.Children.Count - 1, chip);
         }
-        attachmentMessage.Text = controller.Sync.AttachmentStatus ?? localAttachmentMessage;
-        attachmentMessage.ToolTip = attachmentMessage.Text;
+        AttachmentPanel.InvalidateMeasure();
+    }
+    ContextMenu AttachmentMenu(Attachment value)
+    {
+        var menu = new ContextMenu();
+        foreach (var item in AttachmentItems(value)) menu.Items.Add(item);
+        return menu;
+    }
+    IEnumerable<object> AttachmentItems(Attachment value)
+    {
+        yield return new MenuItem { Header = $"{value.Name} · {SizeLabel(value.Size)}", Style = Theme.Style("SectionMenuHeader"), IsEnabled = false };
+        bool busy = downloading.Contains(value.Id);
+        var download = new MenuItem { Header = busy ? "正在下载…" : "下载…", Icon = Theme.Glyph("\uE896", 13), IsEnabled = !busy && controller.Sync.Files != null };
+        download.Click += async (_, _) =>
+        {
+            if (!downloading.Add(value.Id)) return;
+            try { await controller.DownloadAttachment(value, this); } finally { downloading.Remove(value.Id); }
+        };
+        yield return download;
+        var remove = new MenuItem { Header = "移除…", Icon = Theme.Glyph("\uE738", 13), IsEnabled = controller.CurrentNote(Id) is { Deleted: false } };
+        remove.Click += (_, _) => controller.RemoveAttachment(Id, value, this);
+        yield return remove;
+    }
+    void ShowAllAttachments(Button anchor)
+    {
+        var menu = new ContextMenu();
+        foreach (var value in attachmentValues)
+        {
+            var item = new MenuItem { Header = value.Name, Icon = Theme.Glyph(FileGlyph(value.Name), 13) };
+            foreach (var child in AttachmentItems(value)) item.Items.Add(child);
+            menu.Items.Add(item);
+        }
+        menu.PlacementTarget = anchor; menu.Placement = PlacementMode.Top; menu.IsOpen = true;
     }
     public void Remap(string id, Receipt[] receipts, Change[] sent)
     {
@@ -220,9 +299,16 @@ public sealed class NoteWindow : ChromeWindow
         }
         else Notice.Visibility = Visibility.Collapsed;
         bool waiting = state.Pending.ContainsKey(Id) || state.FrozenBatch.Any(c => c.NoteId == Id);
-        Footer.Text = !controller.Store.LastSaved ? "本地保存失败，请勿退出" : state.DraftIds.Contains(Id) ? "本机草稿 · 空白关窗自动丢弃" : controller.Sync.Syncing && controller.Sync.ShowProgress ? "正在同步…" : controller.Sync.Error ?? (waiting ? "已保存 · 等待同步" : controller.Sync.Status);
-        Footer.Foreground = !controller.Store.LastSaved ? Brushes.Firebrick : controller.Sync.Error == null ? Theme.Muted : Brushes.DarkOrange;
+        // Footer is quiet: the edit time when everything is synced, otherwise the state that needs attention.
+        string? syncText = state.DraftIds.Contains(Id) ? "本机草稿 · 空白关窗自动丢弃" : controller.Sync.Syncing && controller.Sync.ShowProgress ? "正在同步…" : controller.Sync.Error ?? (waiting ? "已保存 · 等待同步" : controller.Sync.LastSyncAt == null ? controller.Sync.Status : null);
+        string? message = controller.Sync.AttachmentStatus ?? (localAttachmentMessage.Length > 0 ? localAttachmentMessage : null);
+        Footer.Text = !controller.Store.LastSaved ? "本地保存失败，请勿退出" : message ?? Theme.Timestamp(note.UpdatedAt) + (syncText == null ? "" : " · " + syncText);
+        bool quiet = controller.Store.LastSaved && message == null && syncText == null;
+        Footer.Foreground = !controller.Store.LastSaved ? Brushes.Firebrick : controller.Sync.Error == null ? Theme.Faint : Brushes.DarkOrange;
         Footer.ToolTip = controller.Store.SaveError ?? "每次正式输入自动保存到本机；已同步表示服务器已确认接收，另一台电脑须运行应用并联网。";
         sync.IsEnabled = !controller.Sync.Syncing; Motion.Spin(spin, controller.Sync.Syncing && controller.Sync.ShowProgress);
+        sync.Visibility = quiet ? Visibility.Hidden : Visibility.Visible;
+        var tint = Theme.Accent(note.Color).Color; var toolTint = Color.FromRgb((byte)(tint.R * .35 + Theme.Ink.R * .65), (byte)(tint.G * .35 + Theme.Ink.G * .65), (byte)(tint.B * .35 + Theme.Ink.B * .65));
+        pin.Foreground = new SolidColorBrush(toolTint); more.Foreground = new SolidColorBrush(toolTint);
     }
 }

@@ -4,10 +4,15 @@ import QuartzCore
 @MainActor enum Theme {
     static let ink = NSColor(hex: 0x303633)
     static let muted = NSColor(hex: 0x596159)
-    static let paper = NSColor(hex: 0xF6F5F0)
+    static let paper = NSColor(hex: 0xFAFAF8)
+    static let field = NSColor(hex: 0xEFEEEA)
+    static let hairline = NSColor(hex: 0xE3E2DC)
+    static let faint = NSColor(hex: 0x8A8A82)
+    static let warning = NSColor(hex: 0xA15C00)
     static let green = NSColor(hex: 0x457A63)
-    static let palette: [String: NSColor] = ["yellow": NSColor(hex: 0xFFF5C9), "green": NSColor(hex: 0xE0F0D6),
-        "blue": NSColor(hex: 0xDBEBFA), "pink": NSColor(hex: 0xFAE0E8), "purple": NSColor(hex: 0xEDE0FA), "gray": NSColor(hex: 0xEDEDE8)]
+    // Note paper is one step softer than the accent so a full window of colour stays calm.
+    static let palette: [String: NSColor] = ["yellow": NSColor(hex: 0xFFF8DC), "green": NSColor(hex: 0xE9F5E1),
+        "blue": NSColor(hex: 0xE6F0FB), "pink": NSColor(hex: 0xFCE8EE), "purple": NSColor(hex: 0xF1E8FC), "gray": NSColor(hex: 0xF1F1EC)]
     static let accents: [String: NSColor] = ["yellow": NSColor(hex: 0xE8B931), "green": NSColor(hex: 0x5BAE6E),
         "blue": NSColor(hex: 0x4A90D9), "pink": NSColor(hex: 0xE07597), "purple": NSColor(hex: 0x9B7BD8), "gray": NSColor(hex: 0x92928A)]
     static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -81,9 +86,27 @@ import QuartzCore
         let animation = CAKeyframeAnimation(keyPath: "transform.scale")
         animation.values = [1, 1.10, 0.97, 1]; animation.duration = 0.22; view.layer?.add(animation, forKey: "pin")
     }
-    static func timestamp(_ value: String) -> String {
+    static func date(_ value: String) -> Date? {
         let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let date = parser.date(from: value) ?? ISO8601DateFormatter().date(from: value) else { return "刚刚" }
+        return parser.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+    // List section for an unpinned note: 今天 / 昨天 / 更早.
+    static func dayGroup(_ value: String) -> String {
+        guard let date = date(value) else { return "今天" }
+        if Calendar.current.isDateInToday(date) { return "今天" }
+        return Calendar.current.isDateInYesterday(date) ? "昨天" : "更早"
+    }
+    // Compact time beside a list row; the section header already says which day.
+    static func shortTime(_ value: String) -> String {
+        guard let date = date(value) else { return "刚刚" }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN")
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) || calendar.isDateInYesterday(date) { formatter.dateFormat = "HH:mm" }
+        else { formatter.dateFormat = calendar.isDate(date, equalTo: Date(), toGranularity: .year) ? "M月d日" : "yyyy/M/d" }
+        return formatter.string(from: date)
+    }
+    static func timestamp(_ value: String) -> String {
+        guard let date = date(value) else { return "刚刚" }
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "zh_CN")
         if Calendar.current.isDateInToday(date) { formatter.dateFormat = "今天 HH:mm" }
         else if Calendar.current.isDateInYesterday(date) { formatter.dateFormat = "昨天 HH:mm" }
@@ -200,15 +223,16 @@ final class CommittedTextView: NSTextView {
     }
 }
 
+// One list row: colour dot, title with time on the right, one line of preview.
+// Colour only marks the dot; selection is a white surface with an ink outline.
 final class NoteCardView: NSView {
     let title = NSTextField(labelWithString: "")
     let preview = NSTextField(labelWithString: "")
     let hint = NSTextField(labelWithString: "")
-    let stripe = NSView()
+    let dot = NSView()
     var id = ""
     var accent = Theme.ink
-    var paper = Theme.paper
-    var selected = false { didSet { updateBorder() } }
+    var selected = false { didSet { paint() } }
     var hovered = false
     var pressed = false
     var interactive = true
@@ -219,10 +243,11 @@ final class NoteCardView: NSView {
     override var acceptsFirstResponder: Bool { true }
     override init(frame: NSRect) {
         super.init(frame: frame); wantsLayer = true
-        layer?.cornerRadius = 8; layer?.borderWidth = 1; layer?.masksToBounds = true; stripe.wantsLayer = true
-        title.font = .systemFont(ofSize: 15, weight: .semibold); title.textColor = Theme.ink
+        layer?.cornerRadius = 8; layer?.masksToBounds = true
+        dot.wantsLayer = true; dot.layer?.cornerRadius = 4
+        title.font = .systemFont(ofSize: 14, weight: .semibold); title.textColor = Theme.ink
         preview.font = .systemFont(ofSize: 13); preview.textColor = Theme.muted
-        hint.font = .systemFont(ofSize: 11); hint.textColor = Theme.muted
+        hint.font = .systemFont(ofSize: 11); hint.textColor = Theme.faint; hint.alignment = .right
         for label in [title, preview, hint] {
             label.lineBreakMode = .byTruncatingTail
             label.maximumNumberOfLines = 1
@@ -230,36 +255,48 @@ final class NoteCardView: NSView {
             label.cell?.wraps = false
             label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
-        for view in [stripe, title, preview, hint] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
+        hint.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal); hint.setContentHuggingPriority(.required, for: .horizontal)
+        for view in [dot, title, preview, hint] { view.translatesAutoresizingMaskIntoConstraints = false; addSubview(view) }
         NSLayoutConstraint.activate([
-            stripe.leadingAnchor.constraint(equalTo: leadingAnchor), stripe.widthAnchor.constraint(equalToConstant: 4), stripe.topAnchor.constraint(equalTo: topAnchor), stripe.bottomAnchor.constraint(equalTo: bottomAnchor),
-            title.topAnchor.constraint(equalTo: topAnchor, constant: 9), title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14), title.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            title.heightAnchor.constraint(equalToConstant: 20),
-            preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3), preview.leadingAnchor.constraint(equalTo: title.leadingAnchor), preview.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            preview.heightAnchor.constraint(equalToConstant: 18),
-            hint.heightAnchor.constraint(equalToConstant: 16),
-            hint.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8), hint.leadingAnchor.constraint(equalTo: title.leadingAnchor), hint.trailingAnchor.constraint(equalTo: title.trailingAnchor)])
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), dot.widthAnchor.constraint(equalToConstant: 8), dot.heightAnchor.constraint(equalToConstant: 8),
+            dot.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            title.topAnchor.constraint(equalTo: topAnchor, constant: 9), title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 28),
+            title.trailingAnchor.constraint(lessThanOrEqualTo: hint.leadingAnchor, constant: -8), title.heightAnchor.constraint(equalToConstant: 18),
+            hint.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12), hint.centerYAnchor.constraint(equalTo: title.centerYAnchor),
+            hint.heightAnchor.constraint(equalToConstant: 15), hint.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, multiplier: 0.45),
+            preview.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3), preview.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            preview.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12), preview.heightAnchor.constraint(equalToConstant: 17)])
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityHelp("打开便签；方向键移动，回车打开，右键管理")
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     func update(_ note: Note, pending: Bool, deleteConflict: Bool, query: String = "") {
-        id = note.id; paper = Theme.palette[note.color] ?? Theme.palette["yellow"]!; accent = Theme.accents[note.color] ?? Theme.ink
-        Theme.background(layer, color: hovered ? paper.blended(withFraction: 0.14, of: .white)! : paper)
-        stripe.layer?.backgroundColor = accent.cgColor; updateBorder()
+        id = note.id; accent = Theme.accents[note.color] ?? Theme.ink
+        dot.layer?.backgroundColor = accent.cgColor; paint()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        showMatch(title, String(note.title.prefix(90)), query: trimmed, font: .systemFont(ofSize: 15, weight: .semibold), color: Theme.ink)
-        showMatch(preview, String(note.preview.prefix(130)), query: trimmed, font: .systemFont(ofSize: 13), color: Theme.muted)
-        hint.stringValue = (deleteConflict ? "删除未执行 · " : "") + (note.conflict_of != nil ? "冲突副本 · " : (note.pinned ? "置顶 · " : "")) + Theme.timestamp(note.updated_at) + ((note.attachments ?? []).isEmpty ? "" : " · 附件 \((note.attachments ?? []).count)") + (pending ? " · 待同步" : "")
-        hint.toolTip = hint.stringValue; setAccessibilityLabel(String(note.title.prefix(90)) + "，" + hint.stringValue)
+        showMatch(title, String(note.title.prefix(90)), query: trimmed, font: .systemFont(ofSize: 14, weight: .semibold), color: Theme.ink)
+        let body = String(note.preview.prefix(130))
+        showMatch(preview, body.isEmpty ? "没有更多内容" : body, query: trimmed, font: .systemFont(ofSize: 13), color: body.isEmpty ? Theme.faint : Theme.muted)
+        let flags = (deleteConflict ? ["删除未执行"] : []) + (note.conflict_of != nil ? ["冲突副本"] : []) + (pending ? ["待同步"] : [])
+        let files = (note.attachments ?? []).count
+        let meta = NSMutableAttributedString()
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: deleteConflict || note.conflict_of != nil ? Theme.warning : Theme.faint]
+        if !flags.isEmpty { meta.append(NSAttributedString(string: flags.joined(separator: " · ") + " · ", attributes: attributes)) }
+        if files > 0, let clip = Theme.symbol("paperclip", size: 10) {
+            let icon = NSTextAttachment(); icon.image = clip; icon.bounds = NSRect(x: 0, y: -1, width: clip.size.width, height: clip.size.height)
+            meta.append(NSAttributedString(attachment: icon)); meta.append(NSAttributedString(string: "\(files)  ", attributes: attributes))
+        }
+        meta.append(NSAttributedString(string: Theme.shortTime(note.updated_at), attributes: attributes))
+        hint.attributedStringValue = meta
+        let spoken = (flags + (files > 0 ? ["附件 \(files) 个"] : []) + [Theme.timestamp(note.updated_at)] + (note.pinned ? ["已置顶"] : [])).joined(separator: " · ")
+        hint.toolTip = spoken; setAccessibilityLabel(String(note.title.prefix(90)) + "，" + spoken)
     }
     func showMatch(_ label: NSTextField, _ text: String, query: String, font: NSFont, color: NSColor) {
-        guard !query.isEmpty else { label.stringValue = text; return }
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
         let styled = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
         let ns = text as NSString
         let hit = NSFont.systemFont(ofSize: font.pointSize, weight: .semibold)
         let wash = NSColor(hex: 0xE8B931).withAlphaComponent(0.45)
-        var span = NSRange(location: 0, length: ns.length)
+        var span = NSRange(location: 0, length: query.isEmpty ? 0 : ns.length)
         while span.length > 0 {
             let found = ns.range(of: query, options: .caseInsensitive, range: span)
             if found.location == NSNotFound || found.length == 0 { break }
@@ -269,10 +306,9 @@ final class NoteCardView: NSView {
         }
         label.attributedStringValue = styled
     }
-    func updateBorder() {
-        layer?.borderWidth = selected ? 1.5 : 1
-        let selectedColor = accent.blended(withFraction: 0.5, of: Theme.ink) ?? Theme.ink
-        layer?.borderColor = (selected ? selectedColor : accent.withAlphaComponent(hovered ? 0.6 : 0.25)).cgColor
+    func paint() {
+        layer?.borderWidth = selected ? 1.5 : 0; layer?.borderColor = Theme.ink.cgColor
+        Theme.background(layer, color: selected ? .white : (hovered ? Theme.ink.withAlphaComponent(0.05) : .clear))
     }
     override func becomeFirstResponder() -> Bool { onSelect?(); return true }
     override func mouseDown(with event: NSEvent) { guard interactive else { return }; pressed = true; window?.makeFirstResponder(self) }
@@ -298,19 +334,26 @@ final class NoteCardView: NSView {
         super.updateTrackingAreas(); for area in trackingAreas { removeTrackingArea(area) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect], owner: self))
     }
-    override func mouseEntered(with event: NSEvent) { hovered = true; updateBorder(); Theme.background(layer, color: paper.blended(withFraction: 0.14, of: .white)!) }
-    override func mouseExited(with event: NSEvent) { hovered = false; updateBorder(); Theme.background(layer, color: paper) }
+    override func mouseEntered(with event: NSEvent) { hovered = true; paint() }
+    override func mouseExited(with event: NSEvent) { hovered = false; paint() }
 }
 
+// Rows grouped under small section headers (置顶 / 今天 / 昨天 / 更早); one column, two from 620 pt.
 final class NotesListView: NSView {
-    static let cardHeight: CGFloat = 84
+    static let cardHeight: CGFloat = 56
     static let gap: CGFloat = 8
+    static let rowGap: CGFloat = 2
+    static let headerHeight: CGFloat = 26
+    struct Group { let title: String; let count: Int }
     var cards: [NoteCardView] = []
+    var groups: [Group] = []
+    var headers: [String: NSTextField] = [:]
     var animateNextLayout = false
     var columns: Int { bounds.width >= 620 ? 2 : 1 }
     override var isFlipped: Bool { true }
-    func setCards(_ next: [NoteCardView], animated: Bool = true) {
+    func setCards(_ next: [NoteCardView], groups nextGroups: [Group]? = nil, animated: Bool = true) {
         let removed = cards.filter { card in !next.contains(where: { $0 === card }) }; cards = next
+        groups = nextGroups ?? [Group(title: "", count: next.count)]
         for card in removed {
             card.interactive = false; card.setAccessibilityElement(false)
             if animated && !Theme.reduceMotion {
@@ -323,17 +366,37 @@ final class NotesListView: NSView {
             card.interactive = true; card.setAccessibilityElement(true)
             if card.superview == nil { card.alphaValue = animated && !Theme.reduceMotion ? 0 : 1; addSubview(card) }
         }
+        let titles = Set(groups.map(\.title).filter { !$0.isEmpty })
+        for (title, label) in headers where !titles.contains(title) { label.removeFromSuperview(); headers.removeValue(forKey: title) }
+        for title in titles where headers[title] == nil {
+            let label = NSTextField(labelWithString: title); label.font = .systemFont(ofSize: 11, weight: .medium); label.textColor = Theme.faint
+            label.setAccessibilityRole(.staticText); headers[title] = label; addSubview(label)
+        }
         animateNextLayout = animated; needsLayout = true
+    }
+    // Card frames by index, plus header frames, for the current width.
+    func frames(width total: CGFloat) -> (cards: [NSRect], headers: [(String, NSRect)], height: CGFloat) {
+        let width = (total - CGFloat(columns - 1) * Self.gap) / CGFloat(columns)
+        var result: [NSRect] = []; var titles: [(String, NSRect)] = []; var y: CGFloat = 0
+        for group in groups {
+            if !group.title.isEmpty {
+                titles.append((group.title, NSRect(x: 12, y: y + 6, width: total - 24, height: 16))); y += Self.headerHeight
+            }
+            for index in 0..<group.count {
+                result.append(NSRect(x: CGFloat(index % columns) * (width + Self.gap), y: y + CGFloat(index / columns) * (Self.cardHeight + Self.rowGap), width: width, height: Self.cardHeight))
+            }
+            let rows = (group.count + columns - 1) / columns
+            y += CGFloat(rows) * (Self.cardHeight + Self.rowGap) + 6
+        }
+        return (result, titles, max(0, y - 6))
     }
     override func layout() {
         super.layout()
-        let count = (cards.count + columns - 1) / columns
-        let height = max(0, CGFloat(count) * (Self.cardHeight + Self.gap) - Self.gap)
-        if frame.height != height { frame.size.height = height }
-        let width = (bounds.width - CGFloat(columns - 1) * Self.gap) / CGFloat(columns)
+        let plan = frames(width: bounds.width)
+        if frame.height != plan.height { frame.size.height = plan.height }
+        for (title, rect) in plan.headers { headers[title]?.frame = rect }
         let animated = animateNextLayout && !Theme.reduceMotion; animateNextLayout = false
-        for (index, card) in cards.enumerated() {
-            let target = NSRect(x: CGFloat(index % columns) * (width + Self.gap), y: CGFloat(index / columns) * (Self.cardHeight + Self.gap), width: width, height: Self.cardHeight)
+        for (card, target) in zip(cards, plan.cards) {
             if animated {
                 if card.frame.isEmpty { card.frame = target }
                 Theme.animate(changes: { card.animator().frame = target; card.animator().alphaValue = 1 })

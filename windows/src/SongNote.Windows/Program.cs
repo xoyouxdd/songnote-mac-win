@@ -108,7 +108,13 @@ public static class Diagnostics
                 Require(child.ActualWidth > 100 && p.X >= -1 && p.X + child.ActualWidth <= panel.ActualWidth + 1, "Card clipped horizontally");
                 Require(p.Y + child.ActualHeight <= panel.ActualHeight + 1, "Last row clipped");
             }
-            if (width == 460) Require(main.Notes.ActualHeight >= 544, "Default list cannot show six cards");
+            Require(panel.Headers.Count >= 2 && panel.Headers[0].Title == "置顶", "Pinned and dated sections missing");
+            foreach (FrameworkElement child in panel.Children)
+            {
+                var bounds = new Rect(child.TranslatePoint(new Point(0, 0), panel), child.RenderSize);
+                Require(panel.Headers.All(h => !h.Bounds.IntersectsWith(bounds)), "Section header overlaps a row");
+            }
+            if (width == 460) Require(main.Notes.ActualHeight >= 9 * (ResponsiveNotesPanel.RowHeight + ResponsiveNotesPanel.RowGap), "Default list cannot show nine rows");
             Render(main, Path.Combine(output, $"list-{width:0}.png")); cases++;
         }
         var example = fixture.Visible()[0]; controller.Open(example.Id); var window = controller.Editors[example.Id];
@@ -123,15 +129,16 @@ public static class Diagnostics
         Require(window.AttachmentPanel.Visibility == Visibility.Collapsed, "Empty attachment area occupies note space"); cases++;
         for (int i = 0; i < 8; i++) store.AddAttachment(example.Id, new(Guid.NewGuid().ToString(), "很长的虚构附件名称用于检查窄窗截断-" + i + ".pdf", 1024, new string('a', 64)));
         window.Refresh(); Layout(window, 380, 420);
-        Require(window.AttachmentPanel.Visibility == Visibility.Visible && !window.AttachmentPanel.IsExpanded, "Attachments should start folded");
-        Render(window, Path.Combine(output, "note-attachments-folded.png")); cases++;
-        window.AttachmentPanel.IsExpanded = true;
-        foreach (var size in new[] { new Size(280, 240), new Size(380, 420) })
+        foreach (var size in new[] { new Size(280, 240), new Size(380, 420), new Size(640, 640) })
         {
-            Layout(window, size.Width, size.Height);
-            Require(window.Editor.ActualHeight > 40 && window.AttachmentPanel.ActualHeight <= 130, "Attachment list squeezes the editor or exceeds its height limit");
-            var p = window.AttachmentPanel.TranslatePoint(new Point(), (FrameworkElement)window.Content);
-            Require(p.X >= 0 && p.X + window.AttachmentPanel.ActualWidth <= size.Width, "Attachment list overflows horizontally");
+            Layout(window, size.Width, size.Height); var strip = window.AttachmentPanel;
+            Require(strip.Visibility == Visibility.Visible && strip.ActualHeight <= AttachmentStrip.ChipHeight + 1, "Attachment chips missing or taller than one line");
+            Require(window.Editor.ActualHeight > 40, "Attachment chips squeeze the editor");
+            Require(strip.Shown > 0 && strip.Shown < 8 && strip.Overflow.Visibility == Visibility.Visible && Equals(strip.Overflow.Content, "+" + (8 - strip.Shown)), "Overflowing chips are not collapsed into +N");
+            var p = strip.TranslatePoint(new Point(), (FrameworkElement)window.Content);
+            Require(p.X >= 0 && p.X + strip.ActualWidth <= size.Width, "Attachment chips overflow horizontally");
+            var shown = strip.Children.OfType<FrameworkElement>().Where(c => c.Visibility == Visibility.Visible).Select(c => new Rect(c.TranslatePoint(new Point(), strip), c.RenderSize)).ToArray();
+            Require(shown.All(r => r.Left >= 0 && r.Right <= strip.ActualWidth + 1) && shown.All(a => shown.Count(b => a.IntersectsWith(b) && a != b) == 0), "Attachment chips clipped or overlapping");
             Render(window, Path.Combine(output, $"note-attachments-{size.Width:0}.png")); cases++;
         }
         // Return the main fixture to its original content for the existing close/delete checks.

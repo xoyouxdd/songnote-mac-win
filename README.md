@@ -16,7 +16,7 @@
 
 Mac 编译：`scripts/build-mac.sh`。需要 macOS Command Line Tools；输出为本机架构程序（arm64 或 x86_64），最低 macOS 13，未经 Apple Developer 公证，供本机私人使用。应用包为 `build/SongNote.app`。要配置此安装，先把实际 `client-config.json` 放到 `private/`，再编译。
 
-Mac 数据目录：`~/Library/Application Support/SongNote`。每次正式输入写入本机，服务每 3 秒同步；中文候选文字暂不保存。未编辑空草稿只留本机，关窗丢弃。标题栏提供新建、列表、列表置顶、更多；更多包含六色选择、总在最前和删除。底部一行状态及立即同步，冲突和拒绝删除在正文上方持续提示。⌘F 搜索，列表支持键盘和右键操作；宽窗口自动双列。关闭窗口后仍在菜单栏运行，菜单可直接打开置顶便签或切换开机启动；Command-Q 退出。
+Mac 数据目录：`~/Library/Application Support/SongNote`。每次正式输入写入本机，服务每 3 秒同步；中文候选文字暂不保存。未编辑空草稿只留本机，关窗丢弃。列表按置顶、今天、昨天、更早分组，颜色以圆点标识；便签首行显示为标题。便签标题栏只有列表置顶和更多；更多包含新建、列表、六色选择、附件、总在最前和删除。底部平时只显示修改时间，需要关注时才显示同步状态；冲突和拒绝删除在正文上方持续提示。⌘F 搜索，列表支持键盘和右键操作；宽窗口自动双列。界面规范见 [UI_GUIDELINES.md](docs/UI_GUIDELINES.md)。关闭窗口后仍在菜单栏运行，菜单可直接打开置顶便签或切换开机启动；Command-Q 退出。
 
 当前版本由根目录 `VERSION` 统一定义为 1.2.2。Windows 构建和本机验证通过，见 [Windows 验证记录](windows/VALIDATION.md)；Mac 已完成本机编译、21 项原生布局检查、60 条附件与失败重试运行断言、系统文件窗口实测，并安装运行 1.2.2，见 [Mac 验证记录](docs/MAC_VALIDATION.md)；其余待验收项见 [续作与验收](docs/UI_OPTIMIZATION_HANDOFF.md)。
 

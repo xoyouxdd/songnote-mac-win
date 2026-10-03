@@ -55,21 +55,23 @@ import AppKit
                 try require(abs(card.frame.width - width) < 1, "Card width does not match column")
                 try require(card.frame.minX >= 0 && card.frame.maxX <= scroll.contentSize.width + 1, "Card clipped horizontally")
                 try require(card.frame.maxY <= list.bounds.height + 1, "Last card cannot scroll into view")
-                try require(card.frame.height == 84, "Card height changed unexpectedly")
+                try require(card.frame.height == NotesListView.cardHeight, "Card height changed unexpectedly")
                 for earlier in list.cards.prefix(index) { try require(!card.frame.intersects(earlier.frame), "Cards overlap") }
+                for header in list.headers.values { try require(!card.frame.intersects(header.frame), "Section header overlaps a row") }
                 try checkControls(card)
                 let lines = [card.title, card.preview, card.hint]
-                let frames = lines.map { $0.alignmentRect(forFrame: $0.frame) }.sorted { $0.minY < $1.minY }
-                for pair in zip(frames, frames.dropFirst()) {
-                    try require(pair.1.minY - pair.0.maxY >= 2, "Title, preview or timestamp overlap")
-                }
+                let title = card.title.alignmentRect(forFrame: card.title.frame), preview = card.preview.alignmentRect(forFrame: card.preview.frame)
+                let hint = card.hint.alignmentRect(forFrame: card.hint.frame)
+                try require((card.isFlipped ? preview.minY - title.maxY : title.minY - preview.maxY) >= 2, "Title and preview overlap")
+                try require(hint.minX - title.maxX >= 6 && hint.width > 20, "Title runs into the timestamp")
                 for field in lines {
                     try require(field.maximumNumberOfLines == 1 && field.cell?.usesSingleLineMode == true, "Card label can wrap")
                     try require(field.stringValue.components(separatedBy: .newlines).count == 1, "Newline leaked into card label")
                 }
                 try require(!card.preview.stringValue.isEmpty, "Long multiline note lost its preview")
             }
-            if size.width == 460 { try require(scroll.contentSize.height >= 6 * 84 + 5 * 8, "Default window cannot show six cards") }
+            try require(Set(list.headers.keys) == ["置顶", "更早"], "Pinned and dated sections missing")
+            if size.width == 460 { try require(scroll.contentSize.height >= 9 * (NotesListView.cardHeight + NotesListView.rowGap), "Default window cannot show nine rows") }
             if size.width == 720 { try require(list.columns == 2, "Wide window did not switch to two columns") }
             cases += 1
         }
@@ -86,8 +88,10 @@ import AppKit
                 editor.window.setContentSize(size); editor.window.contentView!.layoutSubtreeIfNeeded()
                 let root = editor.window.contentView!
                 try checkControls(root); try checkTitlebar(editor.window)
-                let button = editor.syncButton.convert(editor.syncButton.bounds, to: root)
-                try require(abs(root.bounds.maxX - button.maxX - 12) < 1, "Sync button is not right aligned")
+                if !editor.syncButton.isHidden {
+                    let button = editor.syncButton.convert(editor.syncButton.bounds, to: root)
+                    try require(abs(root.bounds.maxX - button.maxX - 12) < 1, "Sync button is not right aligned")
+                }
                 try require(editor.editor.enclosingScrollView!.frame.height >= size.height * 0.6, "Editor is squeezed by controls")
                 if mode == 1 { try require(editor.statusLabel.stringValue.contains("保存失败"), "Save failure hidden by sync status") }
                 if mode >= 2 { try require(!editor.banner.isHidden, "Persistent conflict notice hidden") }
@@ -100,29 +104,30 @@ import AppKit
         withFiles.attachments = (0..<8).map { Attachment(id: UUID().uuidString, name: "很长的虚构附件名称检查窄窗-\($0).pdf", size: 1024, sha256: String(repeating: "a", count: 64)) }
         delegate.store.state.deleteConflictIDs = nil; delegate.store.lastSaved = true
         delegate.store.state.notes[original.id] = withFiles
-        for expanded in [false, true] {
-            editor.attachmentsExpanded = expanded; editor.refresh()
-            for size in [NSSize(width: 280, height: 240), NSSize(width: 380, height: 420)] {
-                editor.window.setContentSize(size); editor.window.contentView!.layoutSubtreeIfNeeded()
-                try checkControls(editor.window.contentView!)
-                try require(editor.attachmentContainer.frame.height <= 114, "Attachment list has no height bound")
-                try require(editor.editor.enclosingScrollView!.frame.height >= 60, "Attachment list squeezes the editor")
-                try require(editor.attachmentScroll.isHidden == !expanded, "Attachment fold state is wrong")
-                if expanded {
-                    let rows = editor.attachmentRows
-                    rows.layoutSubtreeIfNeeded()
-                    try require(abs(rows.frame.width - editor.attachmentScroll.contentSize.width) < 1, "Attachment document is wider than its viewport")
-                    try require(rows.isFlipped && rows.arrangedSubviews.first!.frame.intersects(editor.attachmentScroll.contentView.bounds), "Expanded attachments open on a blank viewport")
-                    try require(rows.frame.height > editor.attachmentScroll.contentSize.height, "Long attachment list cannot scroll")
-                    for row in rows.arrangedSubviews {
-                        let frame = row.alignmentRect(forFrame: row.frame)
-                        try require(frame.minX >= -1 && frame.maxX <= rows.bounds.width + 1, "Attachment row clipped horizontally")
-                        try checkControls(row)
-                    }
-                }
-                cases += 1
+        editor.refresh()
+        for size in [NSSize(width: 280, height: 240), NSSize(width: 380, height: 420), NSSize(width: 640, height: 640)] {
+            editor.window.setContentSize(size); editor.window.contentView!.layoutSubtreeIfNeeded()
+            let strip = editor.attachments; strip.layoutSubtreeIfNeeded()
+            try checkControls(editor.window.contentView!)
+            try require(!strip.isHidden && strip.frame.height == 24, "Attachment chips missing or unbounded")
+            try require(editor.editor.enclosingScrollView!.frame.height >= 60, "Attachment chips squeeze the editor")
+            let shown = strip.chips.filter { !$0.isHidden }
+            try require(!shown.isEmpty && shown.count < 8 && !strip.overflow.isHidden, "Overflowing chips are not collapsed into +N")
+            try require(strip.overflow.title == "+\(8 - shown.count)", "Overflow count is wrong")
+            for chip in shown + [strip.overflow] {
+                try require(chip.frame.minX >= 0 && chip.frame.maxX <= strip.bounds.width + 1, "Attachment chip clipped horizontally")
+                for other in shown + [strip.overflow] where other !== chip { try require(!chip.frame.intersects(other.frame), "Attachment chips overlap") }
             }
+            cases += 1
         }
-        print("LAYOUT_CHECK_OK: \(cases) native cases, multiline cards, one/two columns, notices and folded/expanded attachments")
+        // The first non-empty line is displayed as the title without changing the saved plain text.
+        let storage = editor.editor.textStorage!
+        let titleAt = (storage.string as NSString).range(of: "布局便签").location
+        let font = storage.attribute(.font, at: titleAt, effectiveRange: nil) as? NSFont
+        try require(font?.pointSize == NoteWindow.titleFont.pointSize, "First line is not styled as the title")
+        let body = (storage.string as NSString).range(of: "正文预览")
+        try require((storage.attribute(.font, at: body.location, effectiveRange: nil) as? NSFont)?.pointSize == NoteWindow.bodyFont.pointSize, "Body text styled as the title")
+        try require(editor.editor.string == withFiles.text, "Display styling changed the note text")
+        print("LAYOUT_CHECK_OK: \(cases) native cases, multiline cards, one/two columns, notices, title styling and attachment chips")
     }
 }

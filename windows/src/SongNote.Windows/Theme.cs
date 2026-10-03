@@ -8,13 +8,18 @@ public static class Theme
 {
     public static readonly string[] Colors = ["yellow", "green", "blue", "pink", "purple", "gray"];
     public static readonly string[] Names = ["黄色", "绿色", "蓝色", "粉色", "紫色", "灰色"];
-    static readonly string[] Papers = ["#FFF5C9", "#E0F0D6", "#DBEBFA", "#FAE0E8", "#EDE0FA", "#EDEDE8"];
+    // Note paper is one step softer than the accent so a full window of colour stays calm.
+    static readonly string[] Papers = ["#FFF8DC", "#E9F5E1", "#E6F0FB", "#FCE8EE", "#F1E8FC", "#F1F1EC"];
     static readonly string[] Accents = ["#E8B931", "#5BAE6E", "#4A90D9", "#E07597", "#9B7BD8", "#92928A"];
     public static Color Ink => (Color)ColorConverter.ConvertFromString("#303633");
     public static SolidColorBrush Brush(string hex) => new((Color)ColorConverter.ConvertFromString(hex));
     public static SolidColorBrush Paper(string key) => Brush(Papers[Math.Max(0, Array.IndexOf(Colors, key))]);
     public static SolidColorBrush Accent(string key) => Brush(Accents[Math.Max(0, Array.IndexOf(Colors, key))]);
     public static SolidColorBrush Muted => Brush("#596159");
+    public static SolidColorBrush Faint => Brush("#8A8A82");
+    public static SolidColorBrush Warning => Brush("#A15C00");
+    public const string ListSurface = "#FAFAF8", Field = "#EFEEEA", Hairline = "#E3E2DC";
+    public static readonly FontFamily TextFont = new("Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI");
     public static void Install(Application app)
     {
         app.Resources.MergedDictionaries.Add(new ResourceDictionary
@@ -67,6 +72,19 @@ public static class Theme
         FontWeight = strong ? FontWeights.SemiBold : FontWeights.Normal,
         TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center
     };
+    // List section for an unpinned note: 今天 / 昨天 / 更早.
+    public static string DayGroup(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, out var date)) return "今天";
+        var day = date.LocalDateTime.Date; return day == DateTime.Today ? "今天" : day == DateTime.Today.AddDays(-1) ? "昨天" : "更早";
+    }
+    // Compact time beside a list row; the section header already says which day.
+    public static string ShortTime(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, out var date)) return "刚刚";
+        var local = date.LocalDateTime;
+        return local.Date >= DateTime.Today.AddDays(-1) ? $"{local:HH:mm}" : local.Year == DateTime.Today.Year ? $"{local:M月d日}" : $"{local:yyyy/M/d}";
+    }
     public static string Timestamp(string value)
     {
         if (!DateTimeOffset.TryParse(value, out var date)) return "刚刚";

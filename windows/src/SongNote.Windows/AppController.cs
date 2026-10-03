@@ -151,6 +151,9 @@ public sealed class AppController : IDisposable
         var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)
         {
+            var create = new MenuItem { Header = "新建便签", InputGestureText = "Ctrl+N", Icon = Theme.Glyph("\uE710", 13) }; create.Click += (_, _) => NewNote();
+            var list = new MenuItem { Header = "便签列表", InputGestureText = "Ctrl+L", Icon = Theme.Glyph("\uE8FD", 13) }; list.Click += (_, _) => ShowList();
+            menu.Items.Insert(0, create); menu.Items.Insert(1, list); menu.Items.Insert(2, new Separator());
             menu.Items.Add(new Separator());
             var top = new MenuItem { Header = "总在最前（仅本机窗口）", IsCheckable = true, IsChecked = window.Topmost };
             top.Click += (_, _) => { window.Topmost = top.IsChecked; SavePlacement(id, window); }; menu.Items.Add(top);
