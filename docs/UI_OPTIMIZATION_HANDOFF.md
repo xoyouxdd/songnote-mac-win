@@ -1,6 +1,6 @@
 # 当前续作与验收
 
-更新：2026-10-03，版本 1.2.1。版本由根目录 `VERSION` 统一提供给 Windows 程序、Mac Info.plist/About 和服务端 health。
+更新：2026-10-03，源码版本 1.2.2。版本由根目录 `VERSION` 统一提供给 Windows 程序、Mac Info.plist/About 和服务端 health。
 
 ## 当前实现与验证
 
@@ -9,11 +9,11 @@
 - 两端将附件加入整条便签冲突处理及输入法菜单覆盖状态。空正文的附件便签属于正式便签，关闭不丢弃。
 - Windows 持久保存 FrozenBatch；Mac 已新增可兼容旧状态的 LocalState.frozen，失败重试原载荷、合并保存失败保留旧状态。Mac 原生异常路径尚未执行，不能将源码实现等同于运行验收。
 - 服务端保持 protocol=1，通过 health 的 attachments 能力协商扩展；旧客户端省略字段时保留服务器附件。文件与便签同 SQLite，原有 VACUUM INTO 备份包含文件。
-- Windows Release 0 警告/错误、28 核心、49 WPF、2 Node 回环集成、8 服务端测试通过；Swift 语法解析通过。部署与本机原入口更新状态见 [Windows 验证记录](../windows/VALIDATION.md)。
+- Windows Release 0 警告/错误、28 核心、57 原生检查、2 Node 回环集成、8 服务端测试通过；Swift 语法解析通过。部署与本机原入口更新状态见 [Windows 验证记录](../windows/VALIDATION.md)。
 
 ## 文件入口
 
-Windows 1.2.1 的 `AttachmentPicker.cs` 负责单个选择器状态，`AttachmentBrowser.cs` 使用 WPF 列出文件系统条目，后台枚举，不加载系统 Shell 文件对话框；`AttachmentPickerChecks.cs` 验证等待心跳、取消/重开、异常恢复、关闭目标后的回调及目录读取取消。实际虚构文件选择、取消重开与另存已通过。1.2.1 已推送 GitHub，Windows 两个入口和服务端版本标识已更新；数据/配置、回执及备份核验见 Windows 验证记录。
+Windows 1.2.2 的 `AttachmentPicker.cs` 负责选择器状态，`SystemFilePicker.cs` 异步管理独立进程，`SongNote.FilePicker/PickerHost.cs` 在 Windows 自带 Framework 中使用系统现代 Open/Save 窗口。`AttachmentPickerChecks.cs` 已验证管道结果、失败回收和真实系统选择/取消/另存。1.2.1 自制浏览器已删除；发布输出须携带辅助 EXE。当前服务端保持兼容的 1.2.1，未重复部署无功能变化的服务逻辑。
 
 `macos/App.swift`：窗口、折叠附件及交互；`Theme.swift`：卡片/样式/动效；`Models.swift`：附件、冻结载荷、合并和输入法基准；`Store.swift`：原子保存、后台上传和同步；`AttachmentFiles.swift`：私有文件缓存与传输；`LayoutChecks.swift`：虚构内容原生几何检查。构建脚本已包含新增文件和 CryptoKit，最低 macOS 13。
 

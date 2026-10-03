@@ -3,10 +3,10 @@ namespace SongNote.Windows;
 public static class AttachmentPickerChecks
 {
     static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
-    static T Complete<T>(Task<T> task)
+    static T Complete<T>(Task<T> task, int seconds = 3)
     {
         var frame = new DispatcherFrame();
-        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(seconds) };
         timer.Tick += (_, _) => frame.Continue = false;
         var dispatcher = Dispatcher.CurrentDispatcher;
         _ = task.ContinueWith(_ => dispatcher.BeginInvoke(new Action(() => frame.Continue = false)));
@@ -62,12 +62,25 @@ public static class AttachmentPickerChecks
             var directory = Path.Combine(AppContext.BaseDirectory, "picker-check", Guid.NewGuid().ToString("N")); Directory.CreateDirectory(directory);
             try
             {
-                Directory.CreateDirectory(Path.Combine(directory, "虚构子目录")); File.WriteAllText(Path.Combine(directory, "虚构文件.txt"), "虚构数据");
-                var values = Complete(AttachmentBrowser.ReadFolder(directory));
-                Require(values.Length == 2 && values[0].Folder && !values[1].Folder && values[1].Name == "虚构文件.txt", "Filesystem browser lost folders, Unicode names or ordering");
-                using var cancel = new CancellationTokenSource(); cancel.Cancel(); bool canceled = false;
-                try { Complete(AttachmentBrowser.ReadFolder(directory, cancel.Token)); } catch (OperationCanceledException) { canceled = true; }
-                Require(canceled, "Folder read did not honor cancellation"); count++;
+                var source = Path.Combine(directory, "虚构文件.txt"); File.WriteAllText(source, "虚构数据");
+                using var system = new SystemFilePicker(directory);
+                Require(Complete(system.Check("test-selected", directory))?.Single() == source, "Helper Unicode protocol did not round-trip"); count++;
+                foreach (var fault in new[] { "test-crash", "test-malformed", "test-nonce" })
+                {
+                    bool refused = false;
+                    try { Complete(system.Check(fault, directory)); } catch (Exception e) when (e is IOException or InvalidDataException) { refused = true; }
+                    Require(refused && Complete(system.Check("test-selected", directory))?.Single() == source, "Helper failure killed or poisoned the parent client"); count++;
+                }
+                using (var cancel = new CancellationTokenSource(100))
+                    Require(Complete(system.Check("test-wait", directory, cancel.Token)) == null, "Canceled helper did not terminate");
+                count++;
+                Require(Complete(system.Check("smoke-open", directory), 25)?.Single() == source, "Real system Open dialog did not select the Unicode fixture"); count++;
+                Require(Complete(system.Check("smoke-cancel", directory), 25) == null, "Real system Open dialog did not cancel"); count++;
+                var destination = Path.Combine(directory, "系统选择框另存测试.txt");
+                Require(Complete(system.Check("smoke-save", directory), 25)?.Single() == destination, "Real system Save dialog did not return the fixture destination"); count++;
+                using var http = new System.Net.Http.HttpClient(); var files = new AttachmentFiles(directory, null, http);
+                var attachment = Complete(files.Import(source)); Complete(files.Download(attachment, destination));
+                Require(File.ReadAllBytes(source).SequenceEqual(File.ReadAllBytes(destination)), "System picker round trip changed fixture bytes"); count++;
             }
             finally { Directory.Delete(directory, true); }
         }

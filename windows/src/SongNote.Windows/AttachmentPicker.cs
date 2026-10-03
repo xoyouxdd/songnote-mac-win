@@ -1,13 +1,14 @@
 namespace SongNote.Windows;
 
-// Use our own WPF browser: system Shell dialogs can fail-fast in-process on
-// this host. Directory enumeration is asynchronous and never loads Shell UI.
-public sealed class AttachmentPicker
+// The system dialog runs in a small, separate Windows-runtime process.
+// Its native failures cannot terminate or block the WPF note application.
+public sealed class AttachmentPicker : IDisposable
 {
     readonly Func<bool, string?, Task<string[]?>> select;
+    readonly SystemFilePicker? system;
     int busy;
     public bool IsOpen => Volatile.Read(ref busy) != 0;
-    public AttachmentPicker(string? initialDirectory = null) : this((save, name) => AttachmentBrowser.Select(save, name, initialDirectory)) { }
+    public AttachmentPicker(string? initialDirectory = null) { system = new(initialDirectory); select = system.Select; }
     internal AttachmentPicker(Func<bool, string?, Task<string[]?>> select) { this.select = select; }
     public Task<string[]?> Open() => Run(false, null);
     public async Task<string?> Save(string name) => (await Run(true, name))?.FirstOrDefault();
@@ -20,4 +21,5 @@ public sealed class AttachmentPicker
         }
         finally { Volatile.Write(ref busy, 0); }
     }
+    public void Dispose() => system?.Dispose();
 }

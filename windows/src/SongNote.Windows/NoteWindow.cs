@@ -121,6 +121,7 @@ public sealed class NoteWindow : ChromeWindow
     public void ChangePinDuringComposition(bool pinned) { if (compositionBase != null) compositionBase = compositionBase with { Pinned = pinned }; }
     public void ChangeAttachmentsDuringComposition(Attachment[]? values) { if (compositionBase != null) compositionBase = compositionBase with { Attachments = values == null ? null : [.. values] }; }
     public void SetAttachmentMessage(string message) { localAttachmentMessage = message; attachmentMessage.Text = message; attachmentMessage.ToolTip = message; }
+    static string SizeLabel(long size) => size < 1024 ? $"{size} B" : size < 1024 * 1024 ? $"{size / 1024d:0.#} KiB" : $"{size / (1024d * 1024):0.#} MiB";
     void RefreshAttachments(Note note)
     {
         var values = note.Attachments ?? [];
@@ -134,7 +135,7 @@ public sealed class NoteWindow : ChromeWindow
             {
                 var row = new Grid { Margin = new Thickness(0, 3, 0, 3) };
                 row.ColumnDefinitions.Add(new ColumnDefinition()); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var label = Theme.Text($"{value.Name} · {AttachmentFileEntry.SizeLabel(value.Size)}", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
+                var label = Theme.Text($"{value.Name} · {SizeLabel(value.Size)}", 11); label.TextTrimming = TextTrimming.CharacterEllipsis; label.VerticalAlignment = VerticalAlignment.Center; label.ToolTip = value.Name;
                 var download = new Button { Content = "下载", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton") };
                 download.Click += async (_, _) => { download.IsEnabled = false; try { await controller.DownloadAttachment(value, this); } finally { download.IsEnabled = true; } };
                 var remove = new Button { Content = "移除", Padding = new Thickness(5, 2, 5, 2), Margin = new Thickness(4, 0, 0, 0), Style = Theme.Style("SoftButton"), IsEnabled = !note.Deleted };

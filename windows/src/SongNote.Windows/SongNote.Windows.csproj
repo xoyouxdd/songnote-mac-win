@@ -16,4 +16,17 @@
     <Resource Include="../../assets/SongNote.ico" Link="SongNote.ico" />
     <None Include="../../client-config.json" Link="client-config.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('../../client-config.json')" />
   </ItemGroup>
+  <Target Name="BuildSystemFilePicker" AfterTargets="Build">
+    <ItemGroup>
+      <_PickerAttribute Include="System.Reflection.AssemblyVersionAttribute"><_Parameter1>$(AssemblyVersion)</_Parameter1></_PickerAttribute>
+      <_PickerAttribute Include="System.Reflection.AssemblyFileVersionAttribute"><_Parameter1>$(FileVersion)</_Parameter1></_PickerAttribute>
+      <_PickerAttribute Include="System.Reflection.AssemblyInformationalVersionAttribute"><_Parameter1>$(InformationalVersion)</_Parameter1></_PickerAttribute>
+    </ItemGroup>
+    <WriteCodeFragment AssemblyAttributes="@(_PickerAttribute)" Language="C#" OutputFile="$(IntermediateOutputPath)PickerVersion.g.cs" />
+    <Exec Command="&quot;$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\csc.exe&quot; /nologo /target:winexe /platform:anycpu /optimize+ /out:&quot;$(TargetDir)SongNote.FilePicker.exe&quot; /win32icon:&quot;$(MSBuildProjectDirectory)\..\..\assets\SongNote.ico&quot; /win32manifest:&quot;$(MSBuildProjectDirectory)\..\SongNote.FilePicker\app.manifest&quot; /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Web.Extensions.dll &quot;$(MSBuildProjectDirectory)\..\SongNote.FilePicker\PickerHost.cs&quot; &quot;$(IntermediateOutputPath)PickerVersion.g.cs&quot;" />
+    <ItemGroup><FileWrites Include="$(TargetDir)SongNote.FilePicker.exe;$(IntermediateOutputPath)PickerVersion.g.cs" /></ItemGroup>
+  </Target>
+  <Target Name="PublishSystemFilePicker" AfterTargets="ComputeFilesToPublish" DependsOnTargets="BuildSystemFilePicker">
+    <ItemGroup><ResolvedFileToPublish Include="$(TargetDir)SongNote.FilePicker.exe"><RelativePath>SongNote.FilePicker.exe</RelativePath><CopyToPublishDirectory>Always</CopyToPublishDirectory></ResolvedFileToPublish></ItemGroup>
+  </Target>
 </Project>

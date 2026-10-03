@@ -215,7 +215,7 @@ public sealed class AppController : IDisposable
         if (!PrepareExit()) { MessageBox.Show(Main, "内容尚未安全保存，已取消退出。\n" + Store.SaveError, "本地保存失败", MessageBoxButton.OK, MessageBoxImage.Error); return; }
         Quitting = true; Application.Current.Shutdown();
     }
-    public void Dispose() { Sync.Dispose(); clock.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }
+    public void Dispose() { FilePicker.Dispose(); Sync.Dispose(); clock.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }
 }
 
 // Warm tray menu colours matching the in-app menus (the default renderer is blue-grey).
