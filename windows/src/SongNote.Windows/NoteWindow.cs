@@ -271,7 +271,7 @@ public sealed class NoteWindow : ChromeWindow
         if (!remoteClose && !controller.Quitting) PrepareForClose();
         controller.SavePlacement(Id, this);
         if (!controller.Store.LastSaved || !controller.Store.DiscardDraft(Id))
-        { e.Cancel = true; MessageBox.Show(this, "内容尚未安全保存，请点击立即同步重试本地保存。\n" + controller.Store.SaveError, "本地保存失败", MessageBoxButton.OK, MessageBoxImage.Error); }
+        { e.Cancel = true; NoteDialog.Alert(this, "本地保存失败", "内容尚未安全保存，请点击立即同步重试本地保存。\n" + controller.Store.SaveError); }
     }
     public void Refresh()
     {

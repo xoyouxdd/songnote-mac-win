@@ -113,11 +113,11 @@ public sealed class AppController : IDisposable
     void AttachmentError(NoteWindow? owner, string message, string title)
     {
         if (Quitting || dispatcher.HasShutdownStarted) return;
-        MessageBox.Show(owner != null && Editors.Values.Contains(owner) ? owner : Main, message, title, MessageBoxButton.OK, MessageBoxImage.Warning);
+        NoteDialog.Alert(owner != null && Editors.Values.Contains(owner) ? owner : Main, title, message);
     }
     public void RemoveAttachment(string id, Attachment value, NoteWindow window)
     {
-        if (MessageBox.Show(window, "从这条便签移除附件？\n" + value.Name + "\n移除会同步到另一台电脑。", "移除附件", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        if (!NoteDialog.Confirm(window, "移除附件", "从这条便签移除附件？\n" + value.Name + "\n移除会同步到另一台电脑。", "移除")) return;
         Store.RemoveAttachment(id, value.Id); window.ChangeAttachmentsDuringComposition(CurrentNote(id)?.Attachments); Sync.AfterEdit();
     }
     public async Task DownloadAttachment(Attachment value, NoteWindow window)
@@ -138,7 +138,7 @@ public sealed class AppController : IDisposable
     public void Delete(string id, Window? owner = null)
     {
         var note = CurrentNote(id); if (note == null || note.Deleted) return;
-        if (MessageBox.Show(owner ?? Main, "删除这条便签？\n删除会同步到另一台电脑。", "删除便签", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
+        if (!NoteDialog.Confirm(owner ?? Main, "删除便签", "删除这条便签？\n删除会同步到另一台电脑。", "删除")) return;
         if (Editors.TryGetValue(id, out var editor)) editor.PrepareForClose();
         Store.Delete(id); Sync.AfterEdit();
     }
@@ -201,7 +201,7 @@ public sealed class AppController : IDisposable
         trayMenu.Items.Add(new Forms.ToolStripSeparator());
         Item(Startup.Registered ? "✓ 开机启动（已注册，系统可禁用）" : "开机启动（未注册）", () =>
         {
-            try { Startup.Toggle(); } catch (Exception e) { MessageBox.Show(Main, e.Message, "无法更改开机启动"); }
+            try { Startup.Toggle(); } catch (Exception e) { NoteDialog.Alert(Main, "无法更改开机启动", e.Message); }
         });
         trayMenu.Items.Add(new Forms.ToolStripSeparator()); Item("退出 SongNote", Quit);
     }
@@ -215,7 +215,7 @@ public sealed class AppController : IDisposable
     }
     public void Quit()
     {
-        if (!PrepareExit()) { MessageBox.Show(Main, "内容尚未安全保存，已取消退出。\n" + Store.SaveError, "本地保存失败", MessageBoxButton.OK, MessageBoxImage.Error); return; }
+        if (!PrepareExit()) { NoteDialog.Alert(Main, "本地保存失败", "内容尚未安全保存，已取消退出。\n" + Store.SaveError); return; }
         Quitting = true; Application.Current.Shutdown();
     }
     public void Dispose() { FilePicker.Dispose(); Sync.Dispose(); clock.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }

@@ -57,7 +57,7 @@ public static class Program
         catch (Exception e)
         {
             controller?.Dispose(); Motion.Dispose();
-            MessageBox.Show("无法启动 SongNote，原数据文件已保留。\n" + e.Message, "SongNote", MessageBoxButton.OK, MessageBoxImage.Error); return 1;
+            NoteDialog.Alert(null, "无法启动 SongNote", "原数据文件已保留。\n" + e.Message); return 1;
         }
     }
     static async Task Listen(string name, AppController controller, CancellationToken token)
@@ -181,6 +181,28 @@ public static class Diagnostics
         {
             Layout(vacant.Main, 460, 710); Require(vacant.Main.EmptyStateVisible, "Empty list does not invite a first note");
             Render(vacant.Main, Path.Combine(output, "list-empty.png")); vacant.Main.Close(); cases++;
+        }
+        foreach (var choice in new[] { "cancel", "action", "escape", "close", "alert" })
+        {
+            var dialog = new NoteDialog(choice == "alert" ? "附件下载失败" : "删除便签",
+                choice == "alert" ? "网络暂时不可用，请稍后重试。\n附件仍保留在便签中。" : "删除这条便签？\n删除会同步到另一台电脑。", choice == "alert" ? null : "删除");
+            dialog.ShowActivated = false;
+            Exception? failure = null;
+            dialog.Loaded += (_, _) => dialog.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            {
+                try
+                {
+                    Require(!dialog.ActionButton.IsDefault && (string)dialog.DismissButton.Content == (choice == "alert" ? "知道了" : "取消"), "Unsafe dialog default or ambiguous label");
+                    if (choice is "cancel" or "alert") Render(dialog, Path.Combine(output, "dialog-" + choice + ".png"));
+                    if (choice == "close") dialog.Close();
+                    else if (choice == "escape") dialog.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(dialog)!, 0, Key.Escape) { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+                    else (choice == "action" ? dialog.ActionButton : dialog.DismissButton).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                catch (Exception e) { failure = e; dialog.Close(); }
+            }));
+            bool accepted = dialog.ShowDialog() == true;
+            if (failure != null) throw failure;
+            Require(accepted == (choice == "action"), "Dialog close/cancel accepted destructive action"); cases++;
         }
         cases += ScrollBarChecks.Run(output);
         cases += SearchChecks.Run();
