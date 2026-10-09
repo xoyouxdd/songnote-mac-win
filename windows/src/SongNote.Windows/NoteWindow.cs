@@ -64,7 +64,7 @@ public sealed class NoteWindow : ChromeWindow
     readonly Button pin, sync, more;
     readonly RotateTransform spin = new();
     bool applying, composing, commitPending, suppressComposition;
-    bool remoteClose;
+    bool remoteClose, closing, closed;
     int compositionGeneration;
     Note? compositionBase;
     bool lastPinned;
@@ -273,8 +273,22 @@ public sealed class NoteWindow : ChromeWindow
         if (!controller.Store.LastSaved || !controller.Store.DiscardDraft(Id))
         { e.Cancel = true; NoteDialog.Alert(this, "本地保存失败", "内容尚未安全保存，请点击立即同步重试本地保存。\n" + controller.Store.SaveError); }
     }
+    protected override void OnClosing(CancelEventArgs e)
+    {
+        // Focus/deactivation and nested prompts can synchronously refresh Editors
+        // before Closed removes this window. Do not call Close again in that interval.
+        closing = true;
+        try { base.OnClosing(e); }
+        finally { if (e.Cancel) closing = false; }
+    }
+    protected override void OnClosed(EventArgs e)
+    {
+        closed = true;
+        base.OnClosed(e);
+    }
     public void Refresh()
     {
+        if (closing || closed) return;
         var state = controller.Store.Snapshot(); if (!state.Notes.TryGetValue(Id, out var note)) return;
         if (note.Deleted && controller.Store.LastSaved && !composing && !commitPending && compositionBase == null)
         { if (IsLoaded) { remoteClose = true; Close(); if (controller.Editors.ContainsKey(Id)) remoteClose = false; } return; }

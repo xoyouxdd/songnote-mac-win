@@ -204,6 +204,7 @@ public static class Diagnostics
             if (failure != null) throw failure;
             Require(accepted == (choice == "action"), "Dialog close/cancel accepted destructive action"); cases++;
         }
+        cases += DeleteCloseChecks.Run();
         cases += ScrollBarChecks.Run(output);
         cases += SearchChecks.Run();
         cases += AttachmentPickerChecks.Run();
