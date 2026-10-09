@@ -91,7 +91,7 @@ static class NativeFrame
     }
 }
 
-// Rows grouped under small section headers (置顶 / 今天 / 昨天 / 更早); one column, two from 620 DIP.
+// Rows grouped under small section headers (已固定 / 今天 / 昨天 / 更早); one column, two from 620 DIP.
 // Headers are drawn by the panel so the list items stay one per note.
 public sealed class ResponsiveNotesPanel : Panel
 {
@@ -280,7 +280,8 @@ public sealed class MainWindow : ChromeWindow
     readonly TextBlock empty = Theme.Text("", 13);
     readonly Button firstNote = new() { Margin = new Thickness(0, 14, 0, 0), HorizontalAlignment = HorizontalAlignment.Center, Visibility = Visibility.Collapsed };
     readonly StackPanel emptyPanel = new() { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
-    readonly Button sync, notices;
+    readonly Button sync, notices, trash;
+    public Button UndoButton { get; } = new() { Content = "撤销", Height = 24, Padding = new Thickness(10, 0, 10, 0), Margin = new Thickness(0, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, Visibility = Visibility.Collapsed };
     readonly Border dot = new() { Width = 6, Height = 6, CornerRadius = new CornerRadius(3), Margin = new Thickness(0, 0, 8, 0) };
     readonly RotateTransform rotation = new();
     readonly TextBlock watermark = Theme.Text("搜索", 13);
@@ -336,9 +337,15 @@ public sealed class MainWindow : ChromeWindow
         notices = Theme.Icon("\uE7BA", "查看冲突提醒", () => AppController.Current.OpenNotice());
         sync.Foreground = Theme.Muted; notices.Foreground = Theme.Muted;
         var rule = new Border { Height = 1, Background = Theme.Brush(Theme.Hairline), VerticalAlignment = VerticalAlignment.Top }; Grid.SetRow(rule, 3); grid.Children.Add(rule);
+        UndoButton.Style = Theme.Style("SoftButton"); AutomationProperties.SetName(UndoButton, "撤销删除"); WindowChrome.SetIsHitTestVisibleInChrome(UndoButton, true);
+        UndoButton.Click += (_, _) => AppController.Current.UndoDelete();
+        trash = Theme.Icon("\uE74D", "最近删除（7 天内可恢复）", () => { var menu = AppController.Current.RecentlyDeletedMenu(); menu.PlacementTarget = trash; menu.Placement = PlacementMode.Top; menu.IsOpen = true; });
+        trash.Foreground = Theme.Muted;
         var footer = new Grid { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 1, 6, 0) };
-        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        footer.Children.Add(dot); Grid.SetColumn(Status, 1); footer.Children.Add(Status); Grid.SetColumn(notices, 2); footer.Children.Add(notices); Grid.SetColumn(sync, 3); footer.Children.Add(sync);
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); footer.ColumnDefinitions.Add(new ColumnDefinition());
+        for (int i = 0; i < 4; i++) footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        footer.Children.Add(dot); Grid.SetColumn(Status, 1); footer.Children.Add(Status); Grid.SetColumn(UndoButton, 2); footer.Children.Add(UndoButton);
+        Grid.SetColumn(trash, 3); footer.Children.Add(trash); Grid.SetColumn(notices, 4); footer.Children.Add(notices); Grid.SetColumn(sync, 5); footer.Children.Add(sync);
         Grid.SetRow(footer, 3); grid.Children.Add(footer); Body.Content = grid;
         Closing += (_, e) => { if (AppController.Current.Quitting) return; e.Cancel = true; Hide(); AppController.Current.TrayHint(); AppController.Current.SavePlacement("list", this); };
     }
@@ -374,7 +381,10 @@ public sealed class MainWindow : ChromeWindow
         bool vacant = !Model.Items.Any(i => !i.Removing);
         emptyPanel.Visibility = vacant ? Visibility.Visible : Visibility.Collapsed;
         firstNote.Visibility = vacant && Model.Query.Trim().Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        Status.Text = Model.Status; Status.ToolTip = saveError ?? Model.Status;
+        var undoable = AppController.Current?.Undoable;
+        Status.Text = undoable != null ? "已删除「" + undoable.Title[..Math.Min(undoable.Title.Length, 16)] + "」" : Model.Status; Status.ToolTip = saveError ?? Model.Status;
+        UndoButton.Visibility = undoable != null ? Visibility.Visible : Visibility.Collapsed;
+        trash.Visibility = state.RecentlyDeleted().Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         Status.Foreground = !saved ? Brushes.Firebrick : syncService.Error == null ? Theme.Muted : Brushes.DarkOrange;
         dot.Background = !saved ? Brushes.Firebrick : syncService.Error == null ? Theme.Brush("#457A63") : Brushes.DarkOrange;
         notices.Visibility = state.Visible().Any(n => n.ConflictOf != null || state.DeleteConflictIds.Contains(n.Id)) ? Visibility.Visible : Visibility.Collapsed;

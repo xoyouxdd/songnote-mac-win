@@ -78,9 +78,9 @@ public sealed class NoteWindow : ChromeWindow
     public NoteWindow(AppController controller, Note note) : base(maximizable: false)
     {
         this.controller = controller; Id = note.Id; Width = 380; Height = 420; MinWidth = 280; MinHeight = 240;
-        // Only pin and "more" stay in the titlebar; new note and the list live in the menu and Ctrl+N / Ctrl+L.
-        pin = Theme.Icon("\uE718", "列表置顶", () => controller.Pin(Id)); Tools.Children.Add(pin);
-        more = Theme.Icon("\uE712", "更多：新建、列表、颜色、附件、总在最前、删除", () => ShowMore()); Tools.Children.Add(more);
+        // The titlebar pin keeps this window above other apps (this PC only); "固定在列表顶部" lives in the menu.
+        pin = Theme.Icon("\uE718", "总在最前", ToggleTopmost); Tools.Children.Add(pin);
+        more = Theme.Icon("\uE712", "更多：新建、列表、固定、颜色、附件、删除", () => ShowMore()); Tools.Children.Add(more);
         var overflow = new Button { Style = Theme.Style("SoftButton"), Height = AttachmentStrip.ChipHeight, Padding = new Thickness(8, 0, 8, 0) };
         overflow.Click += (_, _) => ShowAllAttachments(overflow);
         AttachmentPanel = new AttachmentStrip(overflow) { Margin = new Thickness(14, 2, 14, 2), Visibility = Visibility.Collapsed };
@@ -89,7 +89,7 @@ public sealed class NoteWindow : ChromeWindow
         noticeIcon.Margin = new Thickness(0, 1, 8, 0); noticeIcon.VerticalAlignment = VerticalAlignment.Top;
         var notice = new DockPanel(); DockPanel.SetDock(noticeIcon, Dock.Left); DockPanel.SetDock(noticeAction, Dock.Right);
         notice.Children.Add(noticeIcon); notice.Children.Add(noticeAction); notice.Children.Add(noticeText); Notice.Child = notice; grid.Children.Add(Notice);
-        noticeAction.Click += (_, _) => { var state = controller.Store.Snapshot(); if (state.Notes.TryGetValue(Id, out var current) && current.Deleted) _ = controller.SyncNow(); else if (state.DeleteConflictIds.Contains(Id)) controller.Store.Acknowledge(Id); else if (state.Notes.TryGetValue(Id, out var n) && n.ConflictOf != null) controller.Open(n.ConflictOf); };
+        noticeAction.Click += (_, _) => { var state = controller.Store.Snapshot(); if (state.Notes.TryGetValue(Id, out var current) && current.Deleted) _ = controller.SyncNow(); else if (state.DeleteConflictIds.Contains(Id)) controller.Store.Acknowledge(Id); else if (state.Notes.TryGetValue(Id, out var n) && n.ConflictOf != null) controller.Compare(Id); };
         // A calmer writing surface: about 1.6x line height for 15px Chinese text.
         TextBlock.SetLineHeight(Editor, 24); TextBlock.SetLineStackingStrategy(Editor, LineStackingStrategy.BlockLineHeight);
         Grid.SetRow(Editor, 1); grid.Children.Add(Editor);
@@ -130,7 +130,7 @@ public sealed class NoteWindow : ChromeWindow
         Editor.GotKeyboardFocus += (_, _) => controller.Refresh(); Editor.LostKeyboardFocus += (_, _) => controller.Refresh(true);
         Activated += (_, _) => Motion.Fade(Tools, Tools.Opacity, 1); Deactivated += (_, _) => { Motion.Fade(Tools, Tools.Opacity, .35); controller.Refresh(true); };
         Closing += CloseRequested; Closed += (_, _) => { Motion.Spin(spin, false); controller.NoteClosed(Id); };
-        lastPinned = note.Pinned; Refresh();
+        lastPinned = Topmost; Refresh();
         PreviewKeyDown += (_, e) =>
         {
             if (e.Key == Key.O && Keyboard.Modifiers == ModifierKeys.Control)
@@ -286,10 +286,13 @@ public sealed class NoteWindow : ChromeWindow
         closed = true;
         base.OnClosed(e);
     }
-    public void Refresh()
+    public void ToggleTopmost() { Topmost = !Topmost; controller.SavePlacement(Id, this); Refresh(); }
+    public void Refresh() { if (!closing && !closed) Refresh(controller.Store.Snapshot()); }
+    // The controller passes one snapshot to every window instead of each copying the whole state.
+    public void Refresh(LocalState state)
     {
         if (closing || closed) return;
-        var state = controller.Store.Snapshot(); if (!state.Notes.TryGetValue(Id, out var note)) return;
+        if (!state.Notes.TryGetValue(Id, out var note)) return;
         if (note.Deleted && controller.Store.LastSaved && !composing && !commitPending && compositionBase == null)
         { if (IsLoaded) { remoteClose = true; Close(); if (controller.Editors.ContainsKey(Id)) remoteClose = false; } return; }
         Editor.IsReadOnly = note.Deleted && !composing && !commitPending;
@@ -297,11 +300,11 @@ public sealed class NoteWindow : ChromeWindow
         Title = note.Title + (note.ConflictOf == null ? "" : " · 冲突副本");
         if (!composing && !commitPending && compositionBase == null && Editor.Text != note.Text) ApplyText(note.Text);
         Motion.Color(Surface, Theme.Paper(note.Color).Color);
-        // Pinned: filled pin on a tint of the note colour; never a heavy black block on pastel paper.
-        pin.Background = note.Pinned ? Theme.Tint(note.Color, 0x66) : Brushes.Transparent;
-        pin.ToolTip = note.Pinned ? "已列表置顶（点击取消）" : "列表置顶";
-        pin.Content = note.Pinned ? "\uE841" : "\uE718"; System.Windows.Automation.AutomationProperties.SetName(pin, note.Pinned ? "取消列表置顶" : "列表置顶");
-        if (lastPinned != note.Pinned) { var scale = new ScaleTransform(1, 1); pin.RenderTransform = scale; pin.RenderTransformOrigin = new Point(.5, .5); Motion.Animate(scale, ScaleTransform.ScaleXProperty, 1.1, 1, 220); Motion.Animate(scale, ScaleTransform.ScaleYProperty, 1.1, 1, 220); } lastPinned = note.Pinned;
+        // Always on top: filled pin on a tint of the note colour; never a heavy black block on pastel paper.
+        pin.Background = Topmost ? Theme.Tint(note.Color, 0x4D) : Brushes.Transparent;
+        pin.ToolTip = Topmost ? "总在最前（仅本机，点击取消）" : "总在最前（仅本机）";
+        pin.Content = Topmost ? "\uE841" : "\uE718"; System.Windows.Automation.AutomationProperties.SetName(pin, Topmost ? "取消总在最前" : "总在最前");
+        if (lastPinned != Topmost) { var scale = new ScaleTransform(1, 1); pin.RenderTransform = scale; pin.RenderTransformOrigin = new Point(.5, .5); Motion.Animate(scale, ScaleTransform.ScaleXProperty, 1.1, 1, 220); Motion.Animate(scale, ScaleTransform.ScaleYProperty, 1.1, 1, 220); } lastPinned = Topmost;
         if (note.Deleted && !composing && !commitPending)
             SetNotice("danger", "保存失败，删除未生效", "重试保存", true);
         else if (state.DeleteConflictIds.Contains(Id))
@@ -309,14 +312,14 @@ public sealed class NoteWindow : ChromeWindow
         else if (note.ConflictOf != null)
         {
             bool available = state.Notes.TryGetValue(note.ConflictOf, out var original) && !original.Deleted;
-            SetNotice("info", available ? "冲突副本 · 两份内容都已保留" : "冲突副本 · 原便签已删除", "查看原件", available);
+            SetNotice("info", available ? "冲突副本 · 两份内容都已保留" : "冲突副本 · 原便签已删除", "对比", available);
         }
         else Notice.Visibility = Visibility.Collapsed;
         bool waiting = state.Pending.ContainsKey(Id) || state.FrozenBatch.Any(c => c.NoteId == Id);
         // Footer is quiet: the edit time when everything is synced, otherwise the state that needs attention.
-        string? syncText = state.DraftIds.Contains(Id) ? "本机草稿 · 空白关窗自动丢弃" : controller.Sync.Syncing && controller.Sync.ShowProgress ? "正在同步…" : controller.Sync.Error ?? (waiting ? "已保存 · 等待同步" : controller.Sync.LastSyncAt == null ? controller.Sync.Status : null);
+        string? syncText = state.DraftIds.Contains(Id) ? Texts.Draft : controller.Sync.Syncing && controller.Sync.ShowProgress ? Texts.Syncing : controller.Sync.Error ?? (waiting ? Texts.Waiting : controller.Sync.LastSyncAt == null ? controller.Sync.Status : null);
         string? message = controller.Sync.AttachmentStatus ?? (localAttachmentMessage.Length > 0 ? localAttachmentMessage : null);
-        Footer.Text = !controller.Store.LastSaved ? "本地保存失败，请勿退出" : message ?? Theme.Timestamp(note.UpdatedAt) + (syncText == null ? "" : " · " + syncText);
+        Footer.Text = !controller.Store.LastSaved ? Texts.SaveFailed : message ?? Theme.Timestamp(note.UpdatedAt) + (syncText == null ? "" : " · " + syncText);
         bool quiet = controller.Store.LastSaved && message == null && syncText == null;
         Footer.Foreground = !controller.Store.LastSaved ? Brushes.Firebrick : controller.Sync.Error == null ? Theme.Faint : Brushes.DarkOrange;
         Footer.ToolTip = controller.Store.SaveError ?? "每次正式输入自动保存到本机；已同步表示服务器已确认接收，另一台电脑须运行应用并联网。";

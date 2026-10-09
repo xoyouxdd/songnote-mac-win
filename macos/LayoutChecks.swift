@@ -70,7 +70,7 @@ import AppKit
                 }
                 try require(!card.preview.stringValue.isEmpty, "Long multiline note lost its preview")
             }
-            try require(Set(list.headers.keys) == ["置顶", "更早"], "Pinned and dated sections missing")
+            try require(Set(list.headers.keys) == ["已固定", "更早"], "Pinned and dated sections missing")
             if size.width == 460 { try require(scroll.contentSize.height >= 9 * (NotesListView.cardHeight + NotesListView.rowGap), "Default window cannot show nine rows") }
             if size.width == 720 { try require(list.columns == 2, "Wide window did not switch to two columns") }
             cases += 1
@@ -95,8 +95,10 @@ import AppKit
                 try require(editor.editor.enclosingScrollView!.frame.height >= size.height * 0.6, "Editor is squeezed by controls")
                 if mode == 1 { try require(editor.statusLabel.stringValue.contains("保存失败"), "Save failure hidden by sync status") }
                 if mode >= 2 { try require(!editor.banner.isHidden, "Persistent conflict notice hidden") }
-                // A pinned note shows a tinted pin, never the solid ink block that read as a stuck button.
-                if note.pinned { try require((editor.pinButton as? ToolButton).map { $0.baseColor != Theme.ink && $0.baseColor != .clear } == true, "Pinned state should be a colour tint") }
+                // Always-on-top shows a tinted pin, never the solid ink block that read as a stuck button.
+                editor.window.level = mode == 0 ? .floating : .normal; editor.refresh()
+                let tinted = (editor.pinButton as? ToolButton).map { $0.baseColor != Theme.ink && $0.baseColor != .clear } == true
+                try require(tinted == (mode == 0), "Always-on-top state should be a colour tint only while floating")
                 cases += 1
             }
         }
@@ -128,6 +130,32 @@ import AppKit
         let body = (storage.string as NSString).range(of: "正文预览")
         try require((storage.attribute(.font, at: body.location, effectiveRange: nil) as? NSFont)?.pointSize == NoteWindow.bodyFont.pointSize, "Body text styled as the title")
         try require(editor.editor.string == withFiles.text, "Display styling changed the note text")
-        print("LAYOUT_CHECK_OK: \(cases) native cases, multiline cards, one/two columns, notices, title styling and attachment chips")
+        // Undo offer and 最近删除 fit the narrowest list footer.
+        let victim = delegate.store.visible.last!
+        delegate.store.state.notes[victim.id]?.deleted = true; delegate.store.lastDeleted = (victim.id, Date())
+        delegate.window.setContentSize(NSSize(width: 360, height: 360)); delegate.refresh(forceOrder: true); delegate.window.contentView!.layoutSubtreeIfNeeded()
+        try require(!delegate.undoButton.isHidden && delegate.status.stringValue.hasPrefix("已删除"), "Undo offer missing after delete")
+        try checkControls(delegate.window.contentView!); cases += 1
+        delegate.store.lastDeleted = nil; delegate.store.state.notes[victim.id]?.deleted = false
+        // Conflict comparison: both texts side by side at default and minimum sizes.
+        var copy = original; copy.id = "compare-copy-check"; copy.conflict_of = original.id; copy.text = "冲突副本的虚构内容"
+        delegate.store.state.notes[copy.id] = copy; delegate.store.state.notes[original.id]?.deleted = false
+        let compare = CompareWindow(store: delegate.store, copyID: copy.id)
+        for size in [NSSize(width: 680, height: 440), NSSize(width: 480, height: 300)] {
+            compare.window.setContentSize(size); compare.window.contentView!.layoutSubtreeIfNeeded()
+            try checkControls(compare.window.contentView!)
+            try require(compare.copyText.string == copy.text && compare.originalText.string == delegate.store.state.notes[original.id]!.text, "Comparison shows the wrong texts")
+            try require(compare.originalText.enclosingScrollView!.frame.height >= 120, "Comparison texts squeezed")
+            cases += 1
+        }
+        delegate.store.state.notes.removeValue(forKey: copy.id)
+        // An idle delta poll changes nothing, so nothing is written or refreshed.
+        let store = Store(previewState: delegate.store.state)
+        try? FileManager.default.removeItem(at: store.file)
+        let idle = SyncResponse(protocol: 1, sequence: store.state.sequence ?? 0, notes: [], results: [], delta: true)
+        var probe = store.state; probe.sequence = idle.sequence; store.state = probe
+        try require(store.apply(idle, sent: []) == .unchanged && !FileManager.default.fileExists(atPath: store.file.path), "Idle poll rewrote the state file")
+        cases += 1
+        print("LAYOUT_CHECK_OK: \(cases) native cases, multiline cards, one/two columns, notices, title styling, attachment chips, undo, comparison and idle polls")
     }
 }

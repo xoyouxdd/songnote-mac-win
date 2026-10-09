@@ -136,6 +136,15 @@ public sealed class LocalStore
             Queue(s, note with { Attachments = (note.Attachments ?? []).Where(a => a.Id != attachmentId).ToArray() });
     });
     public void Delete(string id) => Edit(s => { if (s.Notes.TryGetValue(id, out var note) && !note.Deleted) Queue(s, note with { Deleted = true }); });
+    // Undo or restore from 最近删除: an ordinary edit on the tombstone's revision.
+    public void Restore(string id) => Edit(s => { if (s.Notes.TryGetValue(id, out var note) && note.Deleted) Queue(s, note with { Deleted = false }); });
+    // Keep the original note's id and place: copy the conflict copy's content into it, then delete the copy.
+    public void KeepConflictCopy(string copyId) => Edit(s =>
+    {
+        if (!s.Notes.TryGetValue(copyId, out var copy) || copy.ConflictOf == null || !s.Notes.TryGetValue(copy.ConflictOf, out var original) || original.Deleted) return;
+        Queue(s, original with { Text = copy.Text, Attachments = copy.Attachments }); Queue(s, copy with { Deleted = true });
+    });
+    public void KeepOriginal(string copyId) => Edit(s => { if (s.Notes.TryGetValue(copyId, out var copy) && copy.ConflictOf != null && !copy.Deleted) Queue(s, copy with { Deleted = true }); });
     static void Queue(LocalState s, Note note)
     {
         note = note with { UpdatedAt = DateTimeOffset.UtcNow.ToString("O") };
@@ -166,20 +175,23 @@ public sealed class LocalStore
                 if (!Save(candidate)) throw new IOException(SaveError);
                 state = candidate;
             }
-            request = new(state.DeviceId, [.. state.FrozenBatch]);
+            request = new(state.DeviceId, [.. state.FrozenBatch], state.Sequence);
         }
-        Changed?.Invoke(); return request;
+        if (request.Changes.Length > 0) Changed?.Invoke();
+        return request;
     }
-    public void Apply(SyncResponse response, Change[] sent)
+    // Returns false for an idle poll that changed nothing: no write, no Changed event.
+    public bool Apply(SyncResponse response, Change[] sent)
     {
         MergeResult merged;
         lock (gate)
         {
             if (!state.FrozenBatch.SequenceEqual(sent)) throw new InvalidDataException("冻结请求与回执不匹配。");
             merged = StateMerge.Apply(state, response, sent);
+            if (sent.Length == 0 && ProtocolJson.Encode(merged.State) == ProtocolJson.Encode(state)) return false;
             if (!Save(merged.State)) throw new IOException(SaveError);
             state = merged.State;
         }
-        Accepted?.Invoke(merged.Remapped, response.Results, sent); Changed?.Invoke();
+        Accepted?.Invoke(merged.Remapped, response.Results, sent); Changed?.Invoke(); return true;
     }
 }

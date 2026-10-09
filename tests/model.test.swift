@@ -150,6 +150,40 @@ import Foundation
         assert(filesState.pending[fileCopy.id]?.attachments == [] && filesState.pending[fileCopy.id]?.base_revision == 4)
         assert(filesState.notes[fileCopy.id]?.text == "上传期间继续编辑")
         assert(restartedFiles.frozen?.first?.attachments == [attachment])
+        SharedCases.run()
         print("MODEL_TESTS_OK: in-flight edits, conflicts, legacy decoding, drafts, delete notices, attachments, frozen metadata and composition overrides")
+    }
+}
+
+// Shared with the C# core tests: tests/fixtures/sync-cases.json.
+enum SharedCases {
+    struct ExpectedNote: Decodable { var id: String; var text: String; var revision: Int; var deleted: Bool; var conflict_of: String? }
+    struct ExpectedPending: Decodable { var note_id: String; var base_revision: Int; var text: String }
+    struct Expect: Decodable { var notes: [ExpectedNote]; var pending: [ExpectedPending]; var delete_conflicts: [String]; var remapped: [String: String] }
+    struct Case: Decodable { var name: String; var notes: [Note]; var sent: [Change]; var pending: [Change]; var drafts: [String]; var response: SyncResponse; var expect: Expect }
+    struct File: Decodable { var cases: [Case] }
+    static func run() {
+        let candidates = [URL(fileURLWithPath: "tests/fixtures/sync-cases.json"),
+                          URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("fixtures/sync-cases.json")]
+        guard let url = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }),
+              let file = try? JSONDecoder().decode(File.self, from: Data(contentsOf: url)) else { fatalError("Shared sync cases missing or unreadable") }
+        for test in file.cases {
+            var state = LocalState()
+            for note in test.notes { state.notes[note.id] = note }
+            // The Mac keeps a frozen operation in `pending` until its receipt arrives.
+            for change in test.sent + test.pending { state.pending[change.note_id] = change }
+            state.frozen = test.sent; state.draftIDs = Set(test.drafts)
+            precondition(LocalState.validResponse(test.response, sent: test.sent), "\(test.name): response rejected")
+            let remapped = state.merge(test.response, sent: test.sent)
+            let notes = state.notes.values.map { "\($0.id)|\($0.text)|\($0.revision)|\($0.deleted)|\($0.conflict_of ?? "")" }.sorted()
+            let expected = test.expect.notes.map { "\($0.id)|\($0.text)|\($0.revision)|\($0.deleted)|\($0.conflict_of ?? "")" }.sorted()
+            precondition(notes == expected, "\(test.name): notes \(notes) != \(expected)")
+            let pending = state.pending.values.map { "\($0.note_id)|\($0.base_revision)|\($0.text)" }.sorted()
+            precondition(pending == test.expect.pending.map { "\($0.note_id)|\($0.base_revision)|\($0.text)" }.sorted(), "\(test.name): pending \(pending)")
+            precondition((state.deleteConflictIDs ?? []) == Set(test.expect.delete_conflicts), "\(test.name): delete notices")
+            precondition(remapped == test.expect.remapped, "\(test.name): remapped \(remapped)")
+            precondition(state.sequence == test.response.sequence, "\(test.name): sequence not recorded")
+        }
+        print("SHARED_SYNC_CASES_OK: \(file.cases.count) cases from tests/fixtures/sync-cases.json")
     }
 }

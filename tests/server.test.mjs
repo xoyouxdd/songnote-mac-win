@@ -160,3 +160,28 @@ test('Authenticated file HTTP supports zero bytes, checksums, retry and download
     assert.equal((await fetch(base + '/v1/files/../../private', { headers })).status, 404);
   } finally { await new Promise(resolve => server.close(resolve)); store.close(); }
 });
+
+test('Delta sync returns only newer notes plus every note the request touched', () => {
+  const s = createStore(':memory:');
+  const a = randomUUID(), b = randomUUID();
+  s.sync(input([change(a, 0, 'A')])); const second = s.sync(input([change(b, 0, 'B')]));
+  const since = second.sequence;
+  const idle = s.sync({ ...input([]), since });
+  assert.equal(idle.delta, true); assert.deepEqual(idle.notes, []); assert.equal(idle.sequence, since);
+  const edit = s.sync({ device_id: 'windows-device', changes: [change(a, 1, 'A2')] });
+  const pulled = s.sync({ ...input([]), since });
+  assert.deepEqual(pulled.notes.map(n => [n.id, n.text]), [[a, 'A2']]);
+  // A conflict copy includes the untouched original so clients can restore the server version.
+  const copy = s.sync({ ...input([change(b, 0, 'B offline')]), since: edit.sequence });
+  assert.equal(copy.results[0].status, 'conflict_copy');
+  assert.deepEqual(new Set(copy.notes.map(n => n.id)), new Set([b, copy.results[0].note_id]));
+  // Undo of a synced delete: an edit on the tombstone's revision restores the note.
+  const removed = s.sync({ ...input([change(a, edit.results[0].revision, '', { deleted: true })]), since });
+  const restored = s.sync({ ...input([change(a, removed.results[0].revision, 'A2')]), since: removed.sequence });
+  assert.equal(restored.results[0].status, 'applied'); assert.equal(restored.notes.find(n => n.id === a).deleted, false);
+  // Without `since`, or with a sequence the server never reached, the full snapshot is returned.
+  assert.equal(s.sync(input([])).delta, undefined); assert.equal(s.sync(input([])).notes.length, 3);
+  const ahead = s.sync({ ...input([]), since: 10_000 });
+  assert.equal(ahead.delta, undefined); assert.equal(ahead.notes.length, 3);
+  s.close();
+});

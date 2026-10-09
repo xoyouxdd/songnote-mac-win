@@ -35,8 +35,11 @@ public sealed record Attachment(string Id, string Name, long Size, string Sha256
     }
 }
 public sealed record Receipt(string OpId, string NoteId, int Revision, string Status);
-public sealed record SyncRequest(string DeviceId, Change[] Changes);
-public sealed record SyncResponse(int Protocol, int Sequence, Note[] Notes, Receipt[] Results);
+// `Since` asks for a delta; servers without the extension ignore it and send a full snapshot.
+public sealed record SyncRequest(string DeviceId, Change[] Changes,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Since = null);
+// Delta: `Notes` holds only notes changed after `since` plus every note this request touched.
+public sealed record SyncResponse(int Protocol, int Sequence, Note[] Notes, Receipt[] Results, bool Delta = false);
 public sealed record Configuration(string BaseUrl, string Token)
 {
     public void Validate(bool allowLoopbackHttp = false)
@@ -61,12 +64,18 @@ public sealed class LocalState
     public Dictionary<string, Placement> Windows { get; set; } = [];
     public HashSet<string> OpenNotes { get; set; } = [];
     public bool TrayHintShown { get; set; }
+    // Server sequence the local notes reflect; null until the first full snapshot.
+    public int? Sequence { get; set; }
     public LocalState Copy() => new()
     {
         Schema = Schema, DeviceId = DeviceId, Notes = new(Notes), Pending = new(Pending), FrozenBatch = [.. FrozenBatch],
         DraftIds = new(DraftIds), DeleteConflictIds = new(DeleteConflictIds), Windows = new(Windows),
-        OpenNotes = new(OpenNotes), TrayHintShown = TrayHintShown
+        OpenNotes = new(OpenNotes), TrayHintShown = TrayHintShown, Sequence = Sequence
     };
+    // Deleted notes keep their text on the server, so the last 7 days can be restored.
+    public Note[] RecentlyDeleted() => Notes.Values.Where(n => n.Deleted && n.Text.Length > 0 &&
+            DateTimeOffset.TryParse(n.UpdatedAt, out var at) && at >= DateTimeOffset.UtcNow.AddDays(-7))
+        .OrderByDescending(n => n.UpdatedAt, StringComparer.Ordinal).ToArray();
     public Note[] Visible() => Notes.Values.Where(n => !n.Deleted).OrderByDescending(n => n.Pinned)
         .ThenByDescending(n => n.UpdatedAt, StringComparer.Ordinal).ThenBy(n => n.Id, StringComparer.Ordinal).ToArray();
 }

@@ -37,7 +37,9 @@ public static class StateMerge
                 if (next.DeleteConflictIds.Remove(submitted.NoteId)) next.DeleteConflictIds.Add(receipt.NoteId);
             }
         }
-        next.Notes = response.Notes.ToDictionary(n => n.Id);
+        if (response.Delta) { next.Notes = new(source.Notes); foreach (var note in response.Notes) next.Notes[note.Id] = note; }
+        else next.Notes = response.Notes.ToDictionary(n => n.Id);
+        next.Sequence = response.Sequence;
         foreach (var (id, queued) in next.Pending)
         {
             if (!local.TryGetValue(id, out var edited)) throw new InvalidDataException("待提交操作缺少本机正文。");

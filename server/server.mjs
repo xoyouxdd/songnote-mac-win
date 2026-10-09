@@ -37,8 +37,18 @@ export function createStore(path) {
   if (!db.prepare('PRAGMA table_info(notes)').all().some(c => c.name === 'attachments'))
     db.exec("ALTER TABLE notes ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
   const note = row => ({ ...row, attachments: JSON.parse(row.attachments), pinned: !!row.pinned, deleted: !!row.deleted });
-  const snapshot = () => ({ protocol: 1, sequence: db.prepare("SELECT value FROM metadata WHERE key='sequence'").get().value,
+  const sequence = () => db.prepare("SELECT value FROM metadata WHERE key='sequence'").get().value;
+  const snapshot = () => ({ protocol: 1, sequence: sequence(),
     notes: db.prepare('SELECT * FROM notes ORDER BY revision').all().map(note) });
+  // Delta: notes changed after the client's last applied sequence, plus every note this request touched.
+  // A client ahead of the server (restored backup) or without `since` receives the full snapshot.
+  const changedSince = (since, ids) => {
+    const current = sequence();
+    if (!Number.isSafeInteger(since) || since < 0 || since > current) return snapshot();
+    const rows = new Map(db.prepare('SELECT * FROM notes WHERE revision > ? ORDER BY revision').all(since).map(r => [r.id, r]));
+    for (const id of ids) if (!rows.has(id)) { const row = db.prepare('SELECT * FROM notes WHERE id=?').get(id); if (row) rows.set(id, row); }
+    return { protocol: 1, sequence: current, delta: true, notes: [...rows.values()].map(note) };
+  };
   const sync = input => {
     if (!input || !identifier.test(input.device_id) || !Array.isArray(input.changes) || input.changes.length > 100)
       throw Object.assign(new Error('Invalid device_id or changes'), { status: 400 });
@@ -88,7 +98,8 @@ export function createStore(path) {
         db.prepare('INSERT INTO operations VALUES(?,?,?,?)').run(op.op_id, input.device_id, canonical(op), JSON.stringify(result));
         return result;
       });
-      const response = { ...snapshot(), results };
+      const touched = new Set([...input.changes.map(op => op.note_id), ...results.map(r => r.note_id)]);
+      const response = { ...(input.since === undefined ? snapshot() : changedSince(input.since, touched)), results };
       db.exec('COMMIT');
       return response;
     } catch (error) { db.exec('ROLLBACK'); throw error; }
@@ -130,7 +141,7 @@ export function createServer({ token, database }) {
         'X-Content-Type-Options': 'nosniff' });
       res.end(JSON.stringify(payload));
     };
-    if (req.url === '/health' && req.method === 'GET') return send(200, { ok: true, version, protocol: 1, features: ['attachments'], max_file_bytes: maxFileBytes });
+    if (req.url === '/health' && req.method === 'GET') return send(200, { ok: true, version, protocol: 1, features: ['attachments', 'delta'], max_file_bytes: maxFileBytes });
     const actual = Buffer.from(req.headers.authorization ?? '');
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return send(401, { error: 'Unauthorized' });
     if (req.url === '/v1/snapshot' && req.method === 'GET') return send(200, store.snapshot());

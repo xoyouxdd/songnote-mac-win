@@ -1,0 +1,907 @@
+{
+ "description": "Shared merge cases. Swift (tests/model.test.swift) and C# (windows/tests/SongNote.Core.Tests) apply each response to the local state and must reach the same result. 'sent' is the frozen batch; 'pending' holds edits queued after it was frozen.",
+ "cases": [
+  {
+   "name": "applied edit clears the queue",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "你好",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 0,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 0,
+     "text": "你好",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 1,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "你好",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 1,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "note-0001",
+      "revision": 1,
+      "status": "applied"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "你好",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "edit typed during the request follows the accepted revision",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "第二版",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 0,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 0,
+     "text": "第一版",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [
+    {
+     "op_id": "op-000002",
+     "note_id": "note-0001",
+     "base_revision": 0,
+     "text": "第二版",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 1,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "第一版",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 1,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "note-0001",
+      "revision": 1,
+      "status": "applied"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "第二版",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [
+     {
+      "note_id": "note-0001",
+      "base_revision": 1,
+      "text": "第二版"
+     }
+    ],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "conflict copy keeps both texts",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "本机",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "本机",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 3,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 2,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 3,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false,
+      "conflict_of": "note-0001"
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "copy-0001",
+      "revision": 3,
+      "status": "conflict_copy"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "revision": 2,
+      "deleted": false,
+      "conflict_of": null
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机",
+      "revision": 3,
+      "deleted": false,
+      "conflict_of": "note-0001"
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {
+     "note-0001": "copy-0001"
+    }
+   }
+  },
+  {
+   "name": "later edit moves onto the conflict copy",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "本机继续写",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "本机",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [
+    {
+     "op_id": "op-000002",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "本机继续写",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 3,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 2,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 3,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false,
+      "conflict_of": "note-0001"
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "copy-0001",
+      "revision": 3,
+      "status": "conflict_copy"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "revision": 2,
+      "deleted": false,
+      "conflict_of": null
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机继续写",
+      "revision": 3,
+      "deleted": false,
+      "conflict_of": "note-0001"
+     }
+    ],
+    "pending": [
+     {
+      "note_id": "copy-0001",
+      "base_revision": 3,
+      "text": "本机继续写"
+     }
+    ],
+    "delete_conflicts": [],
+    "remapped": {
+     "note-0001": "copy-0001"
+    }
+   }
+  },
+  {
+   "name": "stale delete is rejected and remote text kept",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "旧",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": true
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": true
+    }
+   ],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 2,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端新内容",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 2,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "note-0001",
+      "revision": 2,
+      "status": "delete_conflict"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端新内容",
+      "revision": 2,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [
+     "note-0001"
+    ],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "edit queued behind an applied delete keeps its stale base",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "继续写",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "继续写",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": true
+    }
+   ],
+   "pending": [
+    {
+     "op_id": "op-000002",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "继续写",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 2,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "继续写",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 2,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": true
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "note-0001",
+      "revision": 2,
+      "status": "applied"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "继续写",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [
+     {
+      "note_id": "note-0001",
+      "base_revision": 1,
+      "text": "继续写"
+     }
+    ],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "local draft survives a full snapshot",
+   "notes": [
+    {
+     "id": "draft-0001",
+     "text": "",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 0,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    },
+    {
+     "id": "note-0001",
+     "text": "服务器",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [],
+   "pending": [],
+   "drafts": [
+    "draft-0001"
+   ],
+   "response": {
+    "protocol": 1,
+    "sequence": 1,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "服务器",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 1,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": []
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "draft-0001",
+      "text": "",
+      "revision": 0,
+      "deleted": false,
+      "conflict_of": null
+     },
+     {
+      "id": "note-0001",
+      "text": "服务器",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "full snapshot drops notes the server no longer lists",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "服务器",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    },
+    {
+     "id": "note-0009",
+     "text": "本机残留",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 1,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "服务器",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 1,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": []
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "服务器",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "delta keeps unchanged notes and applies newer ones",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "不变",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    },
+    {
+     "id": "note-0002",
+     "text": "旧",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 2,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 3,
+    "delta": true,
+    "notes": [
+     {
+      "id": "note-0002",
+      "text": "另一端改过",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 3,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": []
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "不变",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     },
+     {
+      "id": "note-0002",
+      "text": "另一端改过",
+      "revision": 3,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "delta conflict copy restores the server original",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "本机",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    },
+    {
+     "id": "note-0009",
+     "text": "无关",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000001",
+     "note_id": "note-0001",
+     "base_revision": 1,
+     "text": "本机",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 3,
+    "delta": true,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 2,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 3,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false,
+      "conflict_of": "note-0001"
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000001",
+      "note_id": "copy-0001",
+      "revision": 3,
+      "status": "conflict_copy"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "另一端",
+      "revision": 2,
+      "deleted": false,
+      "conflict_of": null
+     },
+     {
+      "id": "copy-0001",
+      "text": "本机",
+      "revision": 3,
+      "deleted": false,
+      "conflict_of": "note-0001"
+     },
+     {
+      "id": "note-0009",
+      "text": "无关",
+      "revision": 1,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {
+     "note-0001": "copy-0001"
+    }
+   }
+  },
+  {
+   "name": "delta tombstone and pending edit elsewhere",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "要删",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 1,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    },
+    {
+     "id": "note-0002",
+     "text": "本机在改",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 2,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [],
+   "pending": [
+    {
+     "op_id": "op-000003",
+     "note_id": "note-0002",
+     "base_revision": 2,
+     "text": "本机在改",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 4,
+    "delta": true,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 4,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": true
+     }
+    ],
+    "results": []
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "",
+      "revision": 4,
+      "deleted": true,
+      "conflict_of": null
+     },
+     {
+      "id": "note-0002",
+      "text": "本机在改",
+      "revision": 2,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [
+     {
+      "note_id": "note-0002",
+      "base_revision": 2,
+      "text": "本机在改"
+     }
+    ],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  },
+  {
+   "name": "undo of a synced delete is an edit on the tombstone revision",
+   "notes": [
+    {
+     "id": "note-0001",
+     "text": "恢复的内容",
+     "color": "yellow",
+     "pinned": false,
+     "revision": 4,
+     "updated_at": "2026-10-01T00:00:00.000Z",
+     "deleted": false
+    }
+   ],
+   "sent": [
+    {
+     "op_id": "op-000004",
+     "note_id": "note-0001",
+     "base_revision": 4,
+     "text": "恢复的内容",
+     "color": "yellow",
+     "pinned": false,
+     "deleted": false
+    }
+   ],
+   "pending": [],
+   "drafts": [],
+   "response": {
+    "protocol": 1,
+    "sequence": 5,
+    "delta": true,
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "恢复的内容",
+      "color": "yellow",
+      "pinned": false,
+      "revision": 5,
+      "updated_at": "2026-10-01T00:00:00.000Z",
+      "deleted": false
+     }
+    ],
+    "results": [
+     {
+      "op_id": "op-000004",
+      "note_id": "note-0001",
+      "revision": 5,
+      "status": "applied"
+     }
+    ]
+   },
+   "expect": {
+    "notes": [
+     {
+      "id": "note-0001",
+      "text": "恢复的内容",
+      "revision": 5,
+      "deleted": false,
+      "conflict_of": null
+     }
+    ],
+    "pending": [],
+    "delete_conflicts": [],
+    "remapped": {}
+   }
+  }
+ ]
+}

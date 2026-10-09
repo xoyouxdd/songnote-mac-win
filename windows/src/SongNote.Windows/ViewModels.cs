@@ -75,7 +75,7 @@ public sealed class MainViewModel : ViewModel
         {
             var note = next[index]; var item = Items.FirstOrDefault(i => i.Id == note.Id);
             if (item == null) { item = new(note); Items.Insert(Math.Min(index, Items.Count), item); }
-            var group = note.Pinned ? "置顶" : Theme.DayGroup(note.UpdatedAt);
+            var group = note.Pinned ? "已固定" : Theme.DayGroup(note.UpdatedAt);
             if (!editing || item.Group.Length == 0) item.Group = group;
             item.Update(note, state.Pending.ContainsKey(note.Id) || state.FrozenBatch.Any(c => c.NoteId == note.Id), state.DeleteConflictIds.Contains(note.Id));
             var current = Items.IndexOf(item); if (current != index) Items.Move(current, index);

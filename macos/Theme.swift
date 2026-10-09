@@ -37,6 +37,12 @@ import QuartzCore
         }
         button.attributedTitle = NSAttributedString(string: button.title, attributes: [.font: button.font!, .foregroundColor: primary ? NSColor.white : ink])
     }
+    // Soft text button with breathing room around its label.
+    static func padded(_ button: NSButton, height: CGFloat = 24) {
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.widthAnchor.constraint(equalToConstant: ceil(button.attributedTitle.size().width) + 22).isActive = true
+        button.heightAnchor.constraint(equalToConstant: height).isActive = true
+    }
     static func iconButton(_ name: String, label: String, target: AnyObject?, action: Selector?) -> NSButton {
         let button = ToolButton(image: symbol(name)!, target: target, action: action)
         button.setAccessibilityLabel(label); button.toolTip = label; button.imagePosition = .imageOnly

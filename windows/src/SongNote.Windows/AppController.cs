@@ -21,6 +21,11 @@ public sealed class AppController : IDisposable
     Forms.NotifyIcon? tray;
     readonly Forms.ContextMenuStrip trayMenu = new();
     readonly System.Drawing.Icon? icon;
+    readonly DispatcherTimer undoExpiry = new() { Interval = TimeSpan.FromSeconds(8.1) };
+    readonly Dictionary<string, CompareWindow> compares = [];
+    HotKey? hotKey;
+    // The most recent deletion made on this PC, offered for undo for 8 seconds.
+    public (string Id, DateTimeOffset At)? LastDeleted { get; private set; }
     public AppController(LocalStore store, Configuration? config, bool preview = false, AttachmentPicker? filePicker = null, string? attachmentDirectory = null)
     {
         Current = this; Store = store; Preview = preview; dispatcher = Application.Current.Dispatcher;
@@ -36,6 +41,7 @@ public sealed class AppController : IDisposable
             { Refresh(); Main.Notes.SelectedItem = Model.Items.FirstOrDefault(i => i.Id == next); }
         });
         clock.Tick += (_, _) => Refresh(); if (!preview) clock.Start();
+        undoExpiry.Tick += (_, _) => { undoExpiry.Stop(); Refresh(); };
         if (!preview)
         {
             using var stream = Application.GetResourceStream(new Uri("pack://application:,,,/SongNote.ico"))!.Stream;
@@ -51,18 +57,20 @@ public sealed class AppController : IDisposable
     {
         Restore("list", Main); ShowList();
         foreach (var id in Store.Snapshot().OpenNotes) Open(id); Sync.Start();
+        // System-wide Ctrl+Alt+N opens a new note from any app; a key taken by another app is skipped quietly.
+        hotKey = HotKey.Register(Main, () => { NewNote(); });
     }
     public Note? CurrentNote(string id) => Store.Snapshot().Notes.GetValueOrDefault(id);
     public void Refresh(bool forceOrder = false)
     {
         var state = Store.Snapshot();
-        string status = Store.LastSaved ? Sync.Status : "本地保存失败，请勿退出";
+        string status = Store.LastSaved ? Sync.Status : Texts.SaveFailed;
         int notices = state.Visible().Count(n => n.ConflictOf != null || state.DeleteConflictIds.Contains(n.Id)); if (notices > 0) status += $" · {notices} 条冲突提醒";
         var selected = (Main.Notes.SelectedItem as NoteViewModel)?.Id;
         Model.Refresh(state, status, !forceOrder && Editors.Values.Any(w => w.Editing));
         if (selected != null) Main.Notes.SelectedItem = Model.Items.FirstOrDefault(i => i.Id == selected && !i.Removing);
         Main.Refresh(state, Sync, Store.LastSaved, Store.SaveError);
-        foreach (var window in Editors.Values.ToArray()) window.Refresh();
+        foreach (var window in Editors.Values.ToArray()) window.Refresh(state);
     }
     public void NewNote() { var note = Store.CreateDraft(); Open(note.Id); }
     public void Open(string id)
@@ -138,17 +146,48 @@ public sealed class AppController : IDisposable
     public void Delete(string id, Window? owner = null)
     {
         var note = CurrentNote(id); if (note == null || note.Deleted) return;
-        if (!NoteDialog.Confirm(owner ?? Main, "删除便签", "删除这条便签？\n删除会同步到另一台电脑。", "删除")) return;
+        if (!NoteDialog.Confirm(owner ?? Main, "删除便签", "删除这条便签？\n删除会同步到另一台电脑，7 天内可在「最近删除」中恢复。", "删除")) return;
         if (Editors.TryGetValue(id, out var editor)) editor.PrepareForClose();
-        Store.Delete(id); Sync.AfterEdit();
+        Store.Delete(id); LastDeleted = (id, DateTimeOffset.Now); undoExpiry.Stop(); undoExpiry.Start(); Sync.AfterEdit();
     }
+    public Note? Undoable => LastDeleted is { } d && DateTimeOffset.Now - d.At < TimeSpan.FromSeconds(8) && CurrentNote(d.Id) is { Deleted: true } note ? note : null;
+    public void UndoDelete() { if (LastDeleted is { } d) RestoreNote(d.Id, open: false); }
+    // Undo or restore from 最近删除: an ordinary edit on the tombstone's revision.
+    public void RestoreNote(string id, bool open = true)
+    {
+        if (LastDeleted?.Id == id) LastDeleted = null;
+        Store.Restore(id); Sync.AfterEdit(); Refresh(true); if (open) Open(id);
+    }
+    public ContextMenu RecentlyDeletedMenu()
+    {
+        var menu = new ContextMenu(); var notes = Store.Snapshot().RecentlyDeleted();
+        menu.Items.Add(new MenuItem { Header = notes.Length == 0 ? "没有最近删除的便签" : "点击恢复（保留 7 天）", Style = Theme.Style("SectionMenuHeader"), IsEnabled = false });
+        foreach (var note in notes.Take(30))
+        {
+            var item = new MenuItem { Header = note.Title[..Math.Min(note.Title.Length, 32)], InputGestureText = Theme.Timestamp(note.UpdatedAt),
+                Icon = new Border { Background = Theme.Accent(note.Color), Width = 10, Height = 10, CornerRadius = new CornerRadius(5) } };
+            var target = note.Id; item.Click += (_, _) => RestoreNote(target); menu.Items.Add(item);
+        }
+        return menu;
+    }
+    public void Compare(string copyId)
+    {
+        if (compares.TryGetValue(copyId, out var existing)) { existing.Activate(); return; }
+        var state = Store.Snapshot();
+        if (!state.Notes.TryGetValue(copyId, out var copy) || copy.ConflictOf == null || !state.Notes.TryGetValue(copy.ConflictOf, out var original) || original.Deleted) return;
+        var window = new CompareWindow(this, copy, original); compares[copyId] = window;
+        window.Closed += (_, _) => compares.Remove(copyId);
+        if (!Preview) { window.Show(); window.Activate(); }
+    }
+    public void KeepOriginal(string copyId) { Store.KeepOriginal(copyId); Sync.AfterEdit(); }
+    public void KeepConflictCopy(string copyId) { Store.KeepConflictCopy(copyId); Sync.AfterEdit(); }
     public ContextMenu NoteMenu(string id, NoteWindow? window = null)
     {
         var note = CurrentNote(id); if (note == null) return new();
         var menu = Theme.ColorsMenu(id, note.Color, Color);
         var attach = new MenuItem { Header = "添加附件…", InputGestureText = "Ctrl+O", Icon = Theme.Glyph("\uE723", 13), IsEnabled = Sync.Files != null && !note.Deleted && !FilePicker.IsOpen };
         attach.Click += (_, _) => _ = AddAttachment(id, window); menu.Items.Add(new Separator()); menu.Items.Add(attach);
-        var pin = new MenuItem { Header = note.Pinned ? "取消列表置顶" : "列表置顶", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
+        var pin = new MenuItem { Header = note.Pinned ? "取消固定" : "固定在列表顶部", Icon = Theme.Glyph(note.Pinned ? "\uE77A" : "\uE718", 13) }; pin.Click += (_, _) => Pin(id); menu.Items.Insert(0, pin); menu.Items.Insert(1, new Separator());
         if (window != null)
         {
             var create = new MenuItem { Header = "新建便签", InputGestureText = "Ctrl+N", Icon = Theme.Glyph("\uE710", 13) }; create.Click += (_, _) => NewNote();
@@ -156,7 +195,7 @@ public sealed class AppController : IDisposable
             menu.Items.Insert(0, create); menu.Items.Insert(1, list); menu.Items.Insert(2, new Separator());
             menu.Items.Add(new Separator());
             var top = new MenuItem { Header = "总在最前（仅本机窗口）", IsCheckable = true, IsChecked = window.Topmost };
-            top.Click += (_, _) => { window.Topmost = top.IsChecked; SavePlacement(id, window); }; menu.Items.Add(top);
+            top.Click += (_, _) => { window.Topmost = top.IsChecked; SavePlacement(id, window); window.Refresh(); }; menu.Items.Add(top);
         }
         menu.Items.Add(new Separator());
         var remove = new MenuItem { Header = "删除便签…", Foreground = Theme.Brush("#B42318"), Icon = Theme.Glyph("\uE74D", 13, Theme.Brush("#B42318")) };
@@ -190,12 +229,23 @@ public sealed class AppController : IDisposable
     {
         trayMenu.Items.Clear();
         void Item(string label, Action action) { var item = trayMenu.Items.Add(label); item.Click += (_, _) => dispatcher.BeginInvoke(action); }
-        Item("便签列表", () => ShowList()); Item("新建便签", NewNote); Item("立即同步", () => _ = SyncNow());
-        var pinned = Store.Snapshot().Visible().Where(n => n.Pinned).ToArray();
+        Item("便签列表", () => ShowList()); Item("新建便签（Ctrl+Alt+N）", NewNote); Item("立即同步", () => _ = SyncNow());
+        var snapshot = Store.Snapshot(); var deleted = snapshot.RecentlyDeleted();
+        if (deleted.Length > 0)
+        {
+            var recent = new Forms.ToolStripMenuItem("最近删除");
+            foreach (var note in deleted.Take(20))
+            {
+                var target = note.Id; var entry = recent.DropDownItems.Add(note.Title[..Math.Min(note.Title.Length, 32)]);
+                entry.Click += (_, _) => dispatcher.BeginInvoke(new Action(() => RestoreNote(target)));
+            }
+            trayMenu.Items.Add(recent);
+        }
+        var pinned = snapshot.Visible().Where(n => n.Pinned).ToArray();
         if (pinned.Length > 0)
         {
             trayMenu.Items.Add(new Forms.ToolStripSeparator());
-            trayMenu.Items.Add(new Forms.ToolStripMenuItem("置顶便签") { Enabled = false });
+            trayMenu.Items.Add(new Forms.ToolStripMenuItem("已固定的便签") { Enabled = false });
         }
         foreach (var note in pinned) Item("   " + note.Title[..Math.Min(note.Title.Length, 32)], () => Open(note.Id));
         trayMenu.Items.Add(new Forms.ToolStripSeparator());
@@ -218,7 +268,7 @@ public sealed class AppController : IDisposable
         if (!PrepareExit()) { NoteDialog.Alert(Main, "本地保存失败", "内容尚未安全保存，已取消退出。\n" + Store.SaveError); return; }
         Quitting = true; Application.Current.Shutdown();
     }
-    public void Dispose() { FilePicker.Dispose(); Sync.Dispose(); clock.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }
+    public void Dispose() { hotKey?.Dispose(); FilePicker.Dispose(); Sync.Dispose(); clock.Stop(); undoExpiry.Stop(); if (tray != null) { tray.Visible = false; tray.Dispose(); } trayMenu.Dispose(); icon?.Dispose(); }
 }
 
 // Warm tray menu colours matching the in-app menus (the default renderer is blue-grey).

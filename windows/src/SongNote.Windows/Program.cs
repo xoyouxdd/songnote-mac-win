@@ -108,7 +108,7 @@ public static class Diagnostics
                 Require(child.ActualWidth > 100 && p.X >= -1 && p.X + child.ActualWidth <= panel.ActualWidth + 1, "Card clipped horizontally");
                 Require(p.Y + child.ActualHeight <= panel.ActualHeight + 1, "Last row clipped");
             }
-            Require(panel.Headers.Count >= 2 && panel.Headers[0].Title == "置顶", "Pinned and dated sections missing");
+            Require(panel.Headers.Count >= 2 && panel.Headers[0].Title == "已固定", "Pinned and dated sections missing");
             foreach (FrameworkElement child in panel.Children)
             {
                 var bounds = new Rect(child.TranslatePoint(new Point(0, 0), panel), child.RenderSize);
@@ -121,8 +121,10 @@ public static class Diagnostics
         foreach (var width in new[] { 280d, 380, 640 }) { Layout(window, width, 420); Require(window.Editor.ActualHeight > 300, "Editor squeezed by toolbar"); Render(window, Path.Combine(output, $"note-{width:0}.png")); cases++; }
         // Sticky notes: minimise/close only; the list keeps the full caption set.
         Require(!window.CanMaximize && window.CaptionButtonCount == 2 && main.CanMaximize && main.CaptionButtonCount == 3, "Caption buttons: note must not offer maximise"); cases++;
-        // A pinned note shows a tinted pin, never the solid ink block that read as a stuck button.
-        Require(example.Pinned && window.PinButton.Background is SolidColorBrush pinFill && pinFill.Color != Theme.Ink && pinFill.Color.A > 0, "Pinned state should be a colour tint"); cases++;
+        // The titlebar pin means "always on top" (this PC only), shown as a colour tint, never a solid ink block.
+        Require(window.PinButton.Background is not SolidColorBrush { Color.A: > 0 }, "Pin tinted although the window is not on top");
+        window.ToggleTopmost(); Require(window.Topmost && window.PinButton.Background is SolidColorBrush pinFill && pinFill.Color != Theme.Ink && pinFill.Color.A > 0, "Always-on-top state should be a colour tint");
+        window.ToggleTopmost(); Require(!window.Topmost && store.Snapshot().Notes[example.Id].Pinned == example.Pinned, "Always on top changed the synced list pin"); cases++;
         var more = controller.NoteMenu(example.Id, window); RenderElement(more, Path.Combine(output, "menu-more.png"), 280);
         var headers = more.Items.OfType<MenuItem>().Select(i => i.Header as string).ToArray();
         Require(headers.Contains("添加附件…") && headers.Contains("删除便签…") && headers.Contains("总在最前（仅本机窗口）") && !headers.Any(h => h?.Contains("最大化") == true), "More menu entries changed"); cases++;
@@ -204,6 +206,23 @@ public static class Diagnostics
             if (failure != null) throw failure;
             Require(accepted == (choice == "action"), "Dialog close/cancel accepted destructive action"); cases++;
         }
+        // 最近删除 lists a deleted note and restoring it brings back the same text.
+        var victim = fixture.Visible()[^1];
+        store.Delete(victim.Id); controller.Refresh(true);
+        Require(controller.RecentlyDeletedMenu().Items.OfType<MenuItem>().Any(i => i.IsEnabled), "Deleted note missing from 最近删除");
+        controller.RestoreNote(victim.Id, open: false);
+        Require(store.Snapshot().Notes[victim.Id] is { Deleted: false } back && back.Text == victim.Text, "Restore did not bring the note back"); cases++;
+        // Conflict comparison shows both texts at default and minimum sizes.
+        var originalNote = store.Snapshot().Visible()[0];
+        var copyNote = originalNote with { Id = "compare-copy-check", Text = "冲突副本的虚构内容", ConflictOf = originalNote.Id };
+        var compare = new CompareWindow(controller, copyNote, originalNote);
+        foreach (var size in new[] { new Size(680, 440), new Size(480, 300) })
+        {
+            Layout(compare, size.Width, size.Height);
+            Require(compare.CopyText.Text == copyNote.Text && compare.OriginalText.Text == originalNote.Text && compare.OriginalText.ActualHeight >= 100, "Comparison texts missing or squeezed");
+            Render(compare, Path.Combine(output, $"compare-{size.Width:0}.png")); cases++;
+        }
+        compare.Close();
         cases += DeleteCloseChecks.Run();
         cases += ScrollBarChecks.Run(output);
         cases += SearchChecks.Run();

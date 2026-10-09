@@ -57,11 +57,16 @@ struct Change: Codable, Equatable {
         attachments = note.attachments
     }
 }
-struct Receipt: Codable {
+struct Receipt: Codable, Equatable {
     var op_id: String; var note_id: String; var revision: Int; var status: String
 }
-struct SyncRequest: Codable { var device_id: String; var changes: [Change] }
-struct SyncResponse: Codable { var `protocol`: Int; var sequence: Int; var notes: [Note]; var results: [Receipt] }
+// `since` asks for a delta; servers without the extension ignore it and send a full snapshot.
+struct SyncRequest: Codable { var device_id: String; var changes: [Change]; var since: Int? = nil }
+struct SyncResponse: Codable {
+    var `protocol`: Int; var sequence: Int; var notes: [Note]; var results: [Receipt]
+    // true: `notes` holds only notes changed after `since` plus every note this request touched.
+    var delta: Bool? = nil
+}
 // Transient editor state, never persisted or sent as a protocol field.
 // Menu overrides are separate from the revision anchor of the local edit chain.
 struct NoteComposition {
@@ -97,7 +102,7 @@ struct NoteComposition {
     }
 }
 struct Configuration: Codable { var base_url: String; var token: String }
-struct LocalState: Codable {
+struct LocalState: Codable, Equatable {
     var device_id = UUID().uuidString
     var notes: [String: Note] = [:]
     var pending: [String: Change] = [:]
@@ -107,6 +112,8 @@ struct LocalState: Codable {
     // Untouched empty notes stay local until their first intentional edit.
     var draftIDs: Set<String>?
     var deleteConflictIDs: Set<String>?
+    // Server sequence the local notes reflect; nil until the first full snapshot.
+    var sequence: Int?
     mutating func createDraft() -> Note {
         let note = Note.blank()
         notes[note.id] = note
@@ -155,12 +162,15 @@ struct LocalState: Codable {
             if queued.op_id == submitted.op_id {
                 pending.removeValue(forKey: submitted.note_id)
             } else {
-                queued.base_revision = receipt.revision
+                // An edit queued behind a deletion keeps its stale base, so the server
+                // preserves it as a copy instead of silently undoing the deletion.
+                let revision = submitted.deleted && !queued.deleted ? queued.base_revision : receipt.revision
+                queued.base_revision = revision
                 queued.note_id = receipt.note_id
                 pending.removeValue(forKey: submitted.note_id)
                 pending[receipt.note_id] = queued
                 if var local = notes.removeValue(forKey: submitted.note_id) {
-                    local.id = receipt.note_id; local.revision = receipt.revision
+                    local.id = receipt.note_id; local.revision = revision
                     if receipt.status == "conflict_copy" { local.conflict_of = submitted.note_id }
                     notes[receipt.note_id] = local
                 }
@@ -168,7 +178,12 @@ struct LocalState: Codable {
             if receipt.note_id != submitted.note_id { remapped[submitted.note_id] = receipt.note_id }
         }
         let oldNotes = notes
-        notes = Dictionary(uniqueKeysWithValues: response.notes.map { ($0.id, $0) })
+        if response.delta == true {
+            for note in response.notes { notes[note.id] = note }
+        } else {
+            notes = Dictionary(uniqueKeysWithValues: response.notes.map { ($0.id, $0) })
+        }
+        sequence = response.sequence
         for (id, queued) in pending {
             if var local = oldNotes[id] {
                 local.revision = queued.base_revision

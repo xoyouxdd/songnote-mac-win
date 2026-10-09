@@ -136,6 +136,49 @@ static class Tests
                 store.Delete(note.Id); var sent = store.Freeze().Changes; store.SetText(note.Id, "迟到正文"); store.Apply(Response(sent[0], 6), sent);
                 Check(store.Snapshot().Pending[note.Id].BaseRevision == 5 && !store.Snapshot().Notes[note.Id].Deleted);
             });
+            Test("shared sync cases match the Mac merge (tests/fixtures/sync-cases.json)", () =>
+            {
+                var dir = new DirectoryInfo(AppContext.BaseDirectory);
+                while (dir != null && !File.Exists(Path.Combine(dir.FullName, "tests", "fixtures", "sync-cases.json"))) dir = dir.Parent;
+                Check(dir != null, "shared sync cases not found");
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(dir!.FullName, "tests", "fixtures", "sync-cases.json")));
+                int count = 0;
+                foreach (var c in doc.RootElement.GetProperty("cases").EnumerateArray())
+                {
+                    string name = c.GetProperty("name").GetString()!;
+                    T Read<T>(string key) => ProtocolJson.Decode<T>(c.GetProperty(key).GetRawText());
+                    var state = new LocalState();
+                    foreach (var n in Read<Note[]>("notes")) state.Notes[n.Id] = n;
+                    // Windows removes a frozen operation from Pending; only later edits stay queued.
+                    foreach (var p in Read<Change[]>("pending")) state.Pending[p.NoteId] = p;
+                    var sent = Read<Change[]>("sent"); state.FrozenBatch = sent;
+                    foreach (var d in Read<string[]>("drafts")) state.DraftIds.Add(d);
+                    var response = Read<SyncResponse>("response");
+                    var merged = StateMerge.Apply(state, response, sent);
+                    var expect = c.GetProperty("expect");
+                    var notes = merged.State.Notes.Values.Select(n => $"{n.Id}|{n.Text}|{n.Revision}|{n.Deleted}|{n.ConflictOf}").OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                    var wanted = expect.GetProperty("notes").EnumerateArray().Select(n =>
+                        $"{n.GetProperty("id").GetString()}|{n.GetProperty("text").GetString()}|{n.GetProperty("revision").GetInt32()}|{n.GetProperty("deleted").GetBoolean()}|{(n.GetProperty("conflict_of").ValueKind == System.Text.Json.JsonValueKind.Null ? "" : n.GetProperty("conflict_of").GetString())}")
+                        .OrderBy(x => x, StringComparer.Ordinal).ToArray();
+                    Check(notes.SequenceEqual(wanted), name + ": notes " + string.Join(", ", notes));
+                    var pending = merged.State.Pending.Values.Select(p => $"{p.NoteId}|{p.BaseRevision}|{p.Text}").OrderBy(x => x, StringComparer.Ordinal);
+                    var wantedPending = expect.GetProperty("pending").EnumerateArray().Select(p => $"{p.GetProperty("note_id").GetString()}|{p.GetProperty("base_revision").GetInt32()}|{p.GetProperty("text").GetString()}").OrderBy(x => x, StringComparer.Ordinal);
+                    Check(pending.SequenceEqual(wantedPending), name + ": pending");
+                    Check(merged.State.DeleteConflictIds.SetEquals(expect.GetProperty("delete_conflicts").EnumerateArray().Select(x => x.GetString()!)), name + ": delete notices");
+                    var remapped = expect.GetProperty("remapped").EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString()!);
+                    Check(merged.Remapped.Count == remapped.Count && remapped.All(p => merged.Remapped.GetValueOrDefault(p.Key) == p.Value), name + ": remapped");
+                    Check(merged.State.Sequence == response.Sequence, name + ": sequence not recorded");
+                    count++;
+                }
+                Check(count >= 12, "shared cases incomplete");
+            });
+            Test("idle delta poll writes nothing and restore undoes a delete", () =>
+            {
+                var store = New(out var file); var note = store.CreateDraft(); store.SetText(note.Id, "保留"); var sent = store.Freeze().Changes; store.Apply(Response(sent[0], 3), sent);
+                int writes = file.Writes; Check(!store.Apply(new(1, 3, [], [], true), []) && file.Writes == writes, "idle poll rewrote state");
+                store.Delete(note.Id); store.Restore(note.Id);
+                Check(!store.Snapshot().Notes[note.Id].Deleted && store.Snapshot().Pending[note.Id].BaseRevision == 3 && store.Snapshot().Notes[note.Id].Text == "保留");
+            });
             Test("multi-draft exit transaction failure preserves all editing targets", () =>
             {
                 var store = New(out var file); var first = store.CreateDraft(); var second = store.CreateDraft(); file.Fail = true;
@@ -322,8 +365,9 @@ sealed class MemoryFile : IStateFile
 {
     public LocalState? Data;
     public bool Fail;
+    public int Writes;
     public LocalState? Read() => Data?.Copy();
-    public void Write(LocalState state) { if (Fail) throw new IOException("Injected disk failure"); Data = state.Copy(); }
+    public void Write(LocalState state) { if (Fail) throw new IOException("Injected disk failure"); Data = state.Copy(); Writes++; }
 }
 sealed class FixedBody : HttpMessageHandler
 {
